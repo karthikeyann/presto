@@ -85,6 +85,20 @@ jobs:
             -DMAX_LINK_JOBS=4
           ninja -C _build/release -j 4
 
+      - name: Build dynamic libraries
+        if: |
+          github.event_name == 'schedule' || needs.changes.outputs.codechange == 'true'
+        run: |
+          source /opt/rh/gcc-toolset-12/enable
+          cd presto-native-tests
+          cmake \
+            -B _build/debug \
+            -GNinja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_PREFIX_PATH=/usr/local \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          ninja -C _build/debug -j 4
+
       - name: Ccache after
         run: ccache -s
 
@@ -109,6 +123,15 @@ jobs:
             presto-native-execution/_build/release/velox/velox/functions/remote/server/velox_functions_remote_server_main
             presto-native-execution/_build/release/presto_cpp/main/dynamic_registry/examples/
 
+      - name: Upload test artifacts
+        if: |
+          github.event_name == 'schedule' || needs.changes.outputs.codechange == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: presto-test-build
+          path: |
+            presto-native-tests/_build/debug/presto_cpp/tests/custom_functions
+
   prestocpp-linux-presto-e2e-tests:
     needs: [changes, prestocpp-linux-build-for-test]
     runs-on: ubuntu-22.04
@@ -131,6 +154,14 @@ jobs:
         with:
           name: presto-native-build
           path: presto-native-execution/_build/release
+
+      - name: Download test artifacts
+        if: |
+          github.event_name == 'schedule' || needs.changes.outputs.codechange == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: presto-test-build
+          path: presto-native-tests/_build/debug/presto_cpp/tests/custom_functions
 
       # Permissions are lost when uploading. Details here: https://github.com/actions/upload-artifact/issues/38
       - name: Restore execute permissions and library path
