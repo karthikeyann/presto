@@ -84,20 +84,13 @@ jobs:
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DMAX_LINK_JOBS=4
           ninja -C _build/release -j 4
-
-      - name: Build dynamic libraries
-        if: |
-          github.event_name == 'schedule' || needs.changes.outputs.codechange == 'true'
-        run: |
-          source /opt/rh/gcc-toolset-12/enable
-          cd presto-native-tests
+          cd ../presto-native-tests
           cmake \
             -B _build/debug \
             -GNinja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH=/usr/local \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          ninja -C _build/debug -j 4
 
       - name: Ccache after
         run: ccache -s
