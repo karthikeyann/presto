@@ -170,7 +170,7 @@ public class HudiMetadata
     @Override
     public Map<SchemaTableName, List<ColumnMetadata>> listTableColumns(ConnectorSession session, SchemaTablePrefix prefix)
     {
-        List<SchemaTableName> tables = prefix.getTableName() != null ? singletonList(prefix.toSchemaTableName()) : listTables(session, Optional.of(prefix.getSchemaName()));
+        List<SchemaTableName> tables = prefix.getTableName() != null ? singletonList(prefix.toSchemaTableName()) : listTables(session, Optional.ofNullable(prefix.getSchemaName()));
 
         ImmutableMap.Builder<SchemaTableName, List<ColumnMetadata>> columns = ImmutableMap.builder();
         for (SchemaTableName table : tables) {
@@ -206,7 +206,7 @@ public class HudiMetadata
                 tableName.getTableName()).orElseThrow(() -> new TableNotFoundException(tableName));
 
         List<ColumnMetadata> columnMetadatas = allColumnHandles(table)
-                .map(columnHandle -> columnHandle.toColumnMetadata(typeManager))
+                .map(columnHandle -> columnHandle.toColumnMetadata(typeManager, normalizeIdentifier(session, columnHandle.getName())))
                 .collect(toList());
         return new ConnectorTableMetadata(tableName, columnMetadatas);
     }

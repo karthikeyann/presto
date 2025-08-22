@@ -26,13 +26,11 @@ import com.facebook.presto.common.function.OperatorType;
 import com.facebook.presto.common.predicate.TupleDomain;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.TypeSignature;
-import com.facebook.presto.execution.QueryManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorDeleteTableHandle;
 import com.facebook.presto.spi.ConnectorId;
 import com.facebook.presto.spi.ConnectorInsertTableHandle;
-import com.facebook.presto.spi.ConnectorMetadataUpdateHandle;
 import com.facebook.presto.spi.ConnectorOutputTableHandle;
 import com.facebook.presto.spi.ConnectorResolvedIndex;
 import com.facebook.presto.spi.ConnectorSession;
@@ -90,8 +88,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Multimap;
 import com.google.common.util.concurrent.ListenableFuture;
 import io.airlift.slice.Slice;
-
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -106,6 +103,7 @@ import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
 
 import static com.facebook.airlift.concurrent.MoreFutures.toListenableFuture;
 import static com.facebook.presto.SystemSessionProperties.isIgnoreStatsCalculatorFailures;
@@ -302,6 +300,12 @@ public class MetadataManager
     public void registerBuiltInFunctions(List<? extends SqlFunction> functionInfos)
     {
         functionAndTypeManager.registerBuiltInFunctions(functionInfos);
+    }
+
+    @Override
+    public void registerConnectorFunctions(String catalogName, List<? extends SqlFunction> functionInfos)
+    {
+        functionAndTypeManager.registerConnectorFunctions(catalogName, functionInfos);
     }
 
     @Override
@@ -530,7 +534,7 @@ public class MetadataManager
 
         ImmutableMap.Builder<String, ColumnHandle> map = ImmutableMap.builder();
         for (Entry<String, ColumnHandle> mapEntry : handles.entrySet()) {
-            map.put(mapEntry.getKey().toLowerCase(ENGLISH), mapEntry.getValue());
+            map.put(normalizeIdentifier(session, connectorId.getCatalogName(), mapEntry.getKey()), mapEntry.getValue());
         }
         return map.build();
     }
@@ -543,7 +547,10 @@ public class MetadataManager
 
         ConnectorId connectorId = tableHandle.getConnectorId();
         ConnectorMetadata metadata = getMetadata(session, connectorId);
-        return metadata.getColumnMetadata(session.toConnectorSession(connectorId), tableHandle.getConnectorHandle(), columnHandle);
+        ColumnMetadata columnMetadata = metadata.getColumnMetadata(session.toConnectorSession(connectorId), tableHandle.getConnectorHandle(), columnHandle);
+        ColumnMetadata normalizedColumnMetadata = normalizedColumnMetadata(session, connectorId.getCatalogName(), columnMetadata);
+
+        return normalizedColumnMetadata;
     }
 
     @Override
@@ -569,9 +576,11 @@ public class MetadataManager
                 ConnectorSession connectorSession = session.toConnectorSession(connectorId);
                 metadata.listTables(connectorSession, prefix.getSchemaName()).stream()
                         .map(convertFromSchemaTableName(prefix.getCatalogName()))
-                        .filter(name -> prefix.matches(new QualifiedObjectName(name.getCatalogName(),
+                        .map(name -> new QualifiedObjectName(
+                                name.getCatalogName(),
                                 normalizeIdentifier(session, connectorId.getCatalogName(), name.getSchemaName()),
-                                normalizeIdentifier(session, connectorId.getCatalogName(), name.getObjectName()))))
+                                normalizeIdentifier(session, connectorId.getCatalogName(), name.getObjectName())))
+                        .filter(prefix::matches)
                         .forEach(tables::add);
             }
         }
@@ -598,7 +607,12 @@ public class MetadataManager
                             prefix.getCatalogName(),
                             entry.getKey().getSchemaName(),
                             entry.getKey().getTableName());
-                    tableColumns.put(tableName, entry.getValue());
+
+                    ImmutableList.Builder<ColumnMetadata> normalizedColumns = ImmutableList.builder();
+                    for (ColumnMetadata column : entry.getValue()) {
+                        normalizedColumns.add(normalizedColumnMetadata(session, connectorId.getCatalogName(), column));
+                    }
+                    tableColumns.put(tableName, normalizedColumns.build());
                 }
 
                 // if table and view names overlap, the view wins
@@ -611,7 +625,7 @@ public class MetadataManager
                     ImmutableList.Builder<ColumnMetadata> columns = ImmutableList.builder();
                     for (ViewColumn column : deserializeView(entry.getValue().getViewData()).getColumns()) {
                         columns.add(ColumnMetadata.builder()
-                                .setName(column.getName())
+                                .setName(normalizeIdentifier(session, connectorId.getCatalogName(), column.getName()))
                                 .setType(column.getType())
                                 .build());
                     }
@@ -665,9 +679,13 @@ public class MetadataManager
         CatalogMetadata catalogMetadata = getCatalogMetadataForWrite(session, catalogName);
         ConnectorId connectorId = catalogMetadata.getConnectorId();
         ConnectorMetadata metadata = catalogMetadata.getMetadata();
+        List<ColumnMetadata> normalizedColumns = columns.stream()
+                .map(column -> normalizedColumnMetadata(session, connectorId.getCatalogName(), column))
+                .collect(Collectors.toList());
+
         ConnectorTableHandle connectorTableHandle = metadata.createTemporaryTable(
                 session.toConnectorSession(connectorId),
-                columns,
+                normalizedColumns,
                 partitioningMetadata.map(partitioning -> createConnectorPartitioningMetadata(connectorId, partitioning)));
         return new TableHandle(connectorId, connectorTableHandle, catalogMetadata.getTransactionHandleFor(connectorId), Optional.empty());
     }
@@ -713,7 +731,7 @@ public class MetadataManager
     {
         ConnectorId connectorId = tableHandle.getConnectorId();
         ConnectorMetadata metadata = getMetadataForWrite(session, connectorId);
-        metadata.renameColumn(session.toConnectorSession(connectorId), tableHandle.getConnectorHandle(), source, target.toLowerCase(ENGLISH));
+        metadata.renameColumn(session.toConnectorSession(connectorId), tableHandle.getConnectorHandle(), source, normalizeIdentifier(session, connectorId.getCatalogName(), target));
     }
 
     @Override
@@ -985,9 +1003,11 @@ public class MetadataManager
                 ConnectorSession connectorSession = session.toConnectorSession(connectorId);
                 metadata.listViews(connectorSession, prefix.getSchemaName()).stream()
                         .map(convertFromSchemaTableName(prefix.getCatalogName()))
-                        .filter(name -> prefix.matches(new QualifiedObjectName(name.getCatalogName(),
+                        .map(name -> new QualifiedObjectName(
+                                name.getCatalogName(),
                                 normalizeIdentifier(session, connectorId.getCatalogName(), name.getSchemaName()),
-                                normalizeIdentifier(session, connectorId.getCatalogName(), name.getObjectName()))))
+                                normalizeIdentifier(session, connectorId.getCatalogName(), name.getObjectName())))
+                        .filter(prefix::matches)
                         .forEach(views::add);
             }
         }
@@ -1304,28 +1324,6 @@ public class MetadataManager
     }
 
     @Override
-    public MetadataUpdates getMetadataUpdateResults(Session session, QueryManager queryManager, MetadataUpdates metadataUpdateRequests, QueryId queryId)
-    {
-        ConnectorId connectorId = metadataUpdateRequests.getConnectorId();
-        ConnectorMetadata metadata = getCatalogMetadata(session, connectorId).getMetadata();
-
-        if (queryManager != null && !queriesWithRegisteredCallbacks.contains(queryId)) {
-            // This is the first time we are getting requests for queryId.
-            // Register a callback, so the we do the cleanup when query fails/finishes.
-            queryManager.addStateChangeListener(queryId, state -> {
-                if (state.isDone()) {
-                    metadata.doMetadataUpdateCleanup(queryId);
-                    queriesWithRegisteredCallbacks.remove(queryId);
-                }
-            });
-            queriesWithRegisteredCallbacks.add(queryId);
-        }
-
-        List<ConnectorMetadataUpdateHandle> metadataResults = metadata.getMetadataUpdateResults(metadataUpdateRequests.getMetadataUpdates(), queryId);
-        return new MetadataUpdates(connectorId, metadataResults);
-    }
-
-    @Override
     public FunctionAndTypeManager getFunctionAndTypeManager()
     {
         // TODO: transactional when FunctionManager is made transactional
@@ -1519,6 +1517,19 @@ public class MetadataManager
         }
         session.getRuntimeStats().addMetricValue(GET_IDENTIFIER_NORMALIZATION_TIME_NANOS, NANO, System.nanoTime() - startTime);
         return normalizedString;
+    }
+
+    private ColumnMetadata normalizedColumnMetadata(Session session, String catalogName, ColumnMetadata columnMetadata)
+    {
+        return ColumnMetadata.builder()
+                .setName(normalizeIdentifier(session, catalogName, columnMetadata.getName()))
+                .setType(columnMetadata.getType())
+                .setHidden(columnMetadata.isHidden())
+                .setNullable(columnMetadata.isNullable())
+                .setComment(columnMetadata.getComment().orElse(null))
+                .setProperties(columnMetadata.getProperties())
+                .setExtraInfo(columnMetadata.getExtraInfo().orElse(null))
+                .build();
     }
 
     private ViewDefinition deserializeView(String data)

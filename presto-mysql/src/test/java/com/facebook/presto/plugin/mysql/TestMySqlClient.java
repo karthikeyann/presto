@@ -16,7 +16,7 @@ package com.facebook.presto.plugin.mysql;
 import com.esri.core.geometry.Point;
 import com.esri.core.geometry.ogc.OGCGeometry;
 import com.esri.core.geometry.ogc.OGCPoint;
-import com.facebook.presto.plugin.jdbc.SliceReadFunction;
+import com.facebook.presto.plugin.jdbc.mapping.functions.SliceReadFunction;
 import com.facebook.presto.spi.PrestoException;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -27,8 +27,8 @@ import java.nio.ByteBuffer;
 import java.sql.SQLException;
 
 import static com.facebook.presto.geospatial.GeoFunctions.stGeomFromBinary;
-import static com.facebook.presto.plugin.mysql.MySqlClient.geometryReadMapping;
-import static com.facebook.presto.plugin.mysql.MySqlClient.getAsText;
+import static com.facebook.presto.plugin.jdbc.GeometryUtils.getAsText;
+import static com.facebook.presto.plugin.jdbc.mapping.StandardColumnMappings.geometryReadMapping;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.fail;
 

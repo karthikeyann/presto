@@ -16,23 +16,33 @@ package com.facebook.presto.plugin.jdbc;
 import com.facebook.airlift.configuration.Config;
 import com.facebook.airlift.configuration.ConfigDescription;
 import com.facebook.airlift.configuration.ConfigSecuritySensitive;
+import com.facebook.airlift.units.Duration;
+import com.facebook.airlift.units.MinDuration;
 import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
 import com.google.inject.ConfigurationException;
 import com.google.inject.spi.Message;
-import io.airlift.units.Duration;
-import io.airlift.units.MinDuration;
-
-import javax.annotation.Nullable;
-import javax.annotation.PostConstruct;
-import javax.validation.constraints.NotNull;
+import jakarta.annotation.Nullable;
+import jakarta.annotation.PostConstruct;
+import jakarta.validation.constraints.NotNull;
 
 import java.util.Set;
 
 import static java.util.Locale.ENGLISH;
 import static java.util.concurrent.TimeUnit.MINUTES;
 
+/**
+ * Base configuration class for JDBC connectors.
+ *
+ * This class is provided for convenience and contains common configuration properties
+ * that many JDBC connectors may need. However, core JDBC functionality should not
+ * depend on this class, as JDBC connectors may choose to use their own mechanisms
+ * for connection management, authentication, and other configuration needs.
+ *
+ * Connectors are free to implement their own configuration classes and connection
+ * strategies without extending or using this base configuration.
+ */
 public class BaseJdbcConfig
 {
     private String connectionUrl;
@@ -175,6 +185,10 @@ public class BaseJdbcConfig
         if (isCaseInsensitiveNameMatching() && isCaseSensitiveNameMatching()) {
             throw new ConfigurationException(ImmutableList.of(new Message("Only one of 'case-insensitive-name-matching=true' or 'case-sensitive-name-matching=true' can be set. " +
                     "These options are mutually exclusive.")));
+        }
+
+        if (connectionUrl == null) {
+            throw new ConfigurationException(ImmutableList.of(new Message("connection-url is required but was not provided")));
         }
     }
 }

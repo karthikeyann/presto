@@ -13,7 +13,7 @@
  */
 package com.facebook.presto.plugin.jdbc;
 
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import static java.util.Objects.requireNonNull;
 
@@ -22,18 +22,20 @@ public class JdbcMetadataFactory
     private final JdbcMetadataCache jdbcMetadataCache;
     private final JdbcClient jdbcClient;
     private final boolean allowDropTable;
+    private final TableLocationProvider tableLocationProvider;
 
     @Inject
-    public JdbcMetadataFactory(JdbcMetadataCache jdbcMetadataCache, JdbcClient jdbcClient, JdbcMetadataConfig config)
+    public JdbcMetadataFactory(JdbcMetadataCache jdbcMetadataCache, JdbcClient jdbcClient, JdbcMetadataConfig config, TableLocationProvider tableLocationProvider)
     {
         this.jdbcMetadataCache = requireNonNull(jdbcMetadataCache, "jdbcMetadataCache is null");
         this.jdbcClient = requireNonNull(jdbcClient, "jdbcClient is null");
         requireNonNull(config, "config is null");
         this.allowDropTable = config.isAllowDropTable();
+        this.tableLocationProvider = requireNonNull(tableLocationProvider, "tableLocationProvider is null");
     }
 
     public JdbcMetadata create()
     {
-        return new JdbcMetadata(jdbcMetadataCache, jdbcClient, allowDropTable);
+        return new JdbcMetadata(jdbcMetadataCache, jdbcClient, allowDropTable, tableLocationProvider);
     }
 }

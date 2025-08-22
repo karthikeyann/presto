@@ -297,7 +297,7 @@ public abstract class IcebergDistributedTestBase
     }
 
     @Test
-    public void testRenamePartitionColumn()
+    public void testRenameIdentityPartitionColumn()
     {
         assertQuerySucceeds("create table test_partitioned_table(a int, b varchar) with (partitioning = ARRAY['a'])");
         assertQuerySucceeds("insert into test_partitioned_table values(1, '1001'), (2, '1002')");
@@ -311,6 +311,100 @@ public abstract class IcebergDistributedTestBase
         assertEquals(getQueryRunner().execute("SELECT row_count FROM \"test_partitioned_table$partitions\" where c = 1").getOnlyValue(), 2L);
         assertEquals(getQueryRunner().execute("SELECT row_count FROM \"test_partitioned_table$partitions\" where c = 2").getOnlyValue(), 2L);
         assertEquals(getQueryRunner().execute("SELECT row_count FROM \"test_partitioned_table$partitions\" where c = 3").getOnlyValue(), 1L);
+        assertQuerySucceeds("DROP TABLE test_partitioned_table");
+    }
+
+    @DataProvider(name = "transforms")
+    public String[][] transforms()
+    {
+        return new String[][] {
+            {"a int", "a"},
+            {"a int", "bucket(a, 3)"},
+            {"a int", "bucket(a, 3)', 'a"},
+            {"a int", "truncate(a, 2)"},
+            {"a int", "truncate(a, 2)', 'a', 'bucket(a, 3)"}
+        };
+    }
+
+    @DataProvider(name = "dateTimeTransforms")
+    public String[][] dateTimeTransforms()
+    {
+        return new String[][] {
+            {"a timestamp", "year(a)"},
+            {"a timestamp", "month(a)"},
+            {"a timestamp", "day(a)"},
+            {"a timestamp", "hour(a)"},
+            {"a timestamp", "a', 'month(a)"}
+        };
+    }
+
+    @Test(dataProvider = "transforms")
+    public void testRenamePartitionColumn(String[] transform)
+    {
+        assertQuerySucceeds("DROP TABLE IF EXISTS test_partitioned_table");
+        assertQuerySucceeds(format("create table test_partitioned_table(%s) with (partitioning = ARRAY['%s'])", transform[0], transform[1]));
+        assertQuerySucceeds("insert into test_partitioned_table values(1), (2)");
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 1").getOnlyValue(), 1L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 2").getOnlyValue(), 1L);
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column a to d");
+        assertQuerySucceeds("insert into test_partitioned_table values(1), (2), (3)");
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where d = 1").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where d = 2").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where d = 3").getOnlyValue(), 1L);
+        assertQueryFails("select a from test_partitioned_table", "line 1:8: Column 'a' cannot be resolved");
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column d to e");
+        assertQuerySucceeds("insert into test_partitioned_table values (3)");
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where e = 1").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where e = 2").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where e = 3").getOnlyValue(), 2L);
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column e to a");
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 1").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 2").getOnlyValue(), 2L);
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 3").getOnlyValue(), 2L);
+        assertQuerySucceeds("insert into test_partitioned_table values (3)");
+        assertEquals(getQueryRunner().execute("SELECT count(*) FROM test_partitioned_table where a = 3").getOnlyValue(), 3L);
+        assertQueryFails("select d from test_partitioned_table", "line 1:8: Column 'd' cannot be resolved");
+        assertQueryFails("select e from test_partitioned_table", "line 1:8: Column 'e' cannot be resolved");
+        assertQuerySucceeds("DROP TABLE test_partitioned_table");
+    }
+
+    @Test(dataProvider = "dateTimeTransforms")
+    public void testRenameDatetimePartitionColumn(String[] transform)
+    {
+        Session session = Session.builder(getSession())
+                .setSystemProperty(LEGACY_TIMESTAMP, "false")
+                .build();
+        assertQuerySucceeds("DROP TABLE IF EXISTS test_partitioned_table");
+        assertQuerySucceeds(format("create table test_partitioned_table(%s) with (partitioning = ARRAY['%s'])", transform[0], transform[1]));
+        assertQuerySucceeds("insert into test_partitioned_table values(localtimestamp), (localtimestamp)");
+        assertEquals(getQueryRunner().execute(
+                session,
+                "SELECT count(*) FROM test_partitioned_table where a <= localtimestamp").getOnlyValue(), 2L);
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column a to d");
+        assertQuerySucceeds("insert into test_partitioned_table values(localtimestamp), (localtimestamp), (localtimestamp)");
+        assertEquals(getQueryRunner().execute(
+                session,
+                "SELECT count(*) FROM test_partitioned_table where d <= localtimestamp").getOnlyValue(), 5L);
+        assertQueryFails("select a from test_partitioned_table", "line 1:8: Column 'a' cannot be resolved");
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column d to e");
+        assertQuerySucceeds("insert into test_partitioned_table values (localtimestamp)");
+        assertEquals(getQueryRunner().execute(
+                session,
+                "SELECT count(*) FROM test_partitioned_table where e < localtimestamp").getOnlyValue(), 6L);
+
+        assertQuerySucceeds("alter table test_partitioned_table rename column e to a");
+        assertEquals(getQueryRunner().execute(
+                session,
+                "SELECT count(*) FROM test_partitioned_table where a < localtimestamp").getOnlyValue(), 6L);
+        assertQuerySucceeds("insert into test_partitioned_table values (localtimestamp)");
+        assertEquals(getQueryRunner().execute(session, "SELECT count(*) FROM test_partitioned_table").getOnlyValue(), 7L);
+        assertQueryFails("select d from test_partitioned_table", "line 1:8: Column 'd' cannot be resolved");
+        assertQueryFails("select e from test_partitioned_table", "line 1:8: Column 'e' cannot be resolved");
         assertQuerySucceeds("DROP TABLE test_partitioned_table");
     }
 
@@ -540,10 +634,10 @@ public abstract class IcebergDistributedTestBase
 
         MaterializedResult actual = computeActual("SHOW COLUMNS FROM show_columns_only_identity_partition");
 
-        MaterializedResult expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
-                .row("id", "integer", "", "")
-                .row("name", "varchar", "", "")
-                .row("team", "varchar", "partition key", "")
+        MaterializedResult expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR, BIGINT, BIGINT, BIGINT)
+                .row("id", "integer", "", "", 10L, null, null)
+                .row("name", "varchar", "", "", null, null, 2147483647L)
+                .row("team", "varchar", "partition key", "", null, null, 2147483647L)
                 .build();
 
         assertEquals(actual, expectedParametrizedVarchar);
@@ -556,10 +650,10 @@ public abstract class IcebergDistributedTestBase
 
         actual = computeActual("SHOW COLUMNS FROM show_columns_with_non_identity_partition");
 
-        expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
-                .row("id", "integer", "", "")
-                .row("name", "varchar", "", "")
-                .row("team", "varchar", "partition by truncate[1], identity", "")
+        expectedParametrizedVarchar = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR, BIGINT, BIGINT, BIGINT)
+                .row("id", "integer", "", "", 10L, null, null)
+                .row("name", "varchar", "", "", null, null, 2147483647L)
+                .row("team", "varchar", "partition by truncate[1], identity", "", null, null, 2147483647L)
                 .build();
 
         assertEquals(actual, expectedParametrizedVarchar);
@@ -2052,6 +2146,15 @@ public abstract class IcebergDistributedTestBase
     }
 
     @Test
+    public void testDeleteWithSpecialCharacterColumnName()
+    {
+        assertUpdate("CREATE TABLE test_special_character_column_name (\"<age>\" int, name varchar)");
+        assertUpdate("INSERT INTO test_special_character_column_name VALUES (1, 'abc'), (2, 'def'), (3, 'ghi')", 3);
+        assertUpdate("DELETE FROM test_special_character_column_name where \"<age>\" = 2", 1);
+        assertUpdate("DROP TABLE IF EXISTS test_special_character_column_name");
+    }
+
+    @Test
     public void testDeletedHiddenColumn()
     {
         assertUpdate("DROP TABLE IF EXISTS test_deleted");
@@ -2437,6 +2540,18 @@ public abstract class IcebergDistributedTestBase
         assertQuerySucceeds("DROP TABLE ICEBERG.TEST_SCHEMA2.ICEBERG_T4");
         assertQuerySucceeds("DROP SCHEMA ICEBERG.TEST_SCHEMA1");
         assertQuerySucceeds("DROP SCHEMA ICEBERG.TEST_SCHEMA2");
+    }
+
+    @Test
+    public void testUpdateWithDuplicateValues()
+    {
+        String tableName = "test_update_duplicate_values_" + randomTableSuffix();
+        assertUpdate("CREATE TABLE " + tableName + "(id int, column1 varchar(10), column2 varchar(10), column3 int)");
+        assertUpdate("INSERT INTO " + tableName + " VALUES (1, 'a', 'a', 1), (2, 'b', 'b', 1), (3, 'c', 'c', 1)", 3);
+
+        // update single row with duplicate values
+        assertUpdate("UPDATE " + tableName + " SET column1 = CAST(1 as varchar), column2 = CAST(1 as varchar), column3 = 11 WHERE id = 1", 1);
+        assertQuery("SELECT id, column1, column2, column3 FROM " + tableName, "VALUES (1, '1', '1', 11), (2, 'b', 'b', 1), (3, 'c', 'c', 1)");
     }
 
     @Test

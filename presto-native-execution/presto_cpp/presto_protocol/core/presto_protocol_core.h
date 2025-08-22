@@ -31,6 +31,7 @@
 #include "presto_cpp/external/json/nlohmann/json.hpp"
 #include "presto_cpp/presto_protocol/core/DataSize.h"
 #include "presto_cpp/presto_protocol/core/Duration.h"
+#include "velox/common/base/Exceptions.h"
 #include "velox/common/encode/Base64.h"
 
 using nlohmann::json;
@@ -285,34 +286,9 @@ void to_json(json& j, const std::shared_ptr<PlanNode>& p);
 void from_json(const json& j, std::shared_ptr<PlanNode>& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
-struct ConnectorTableHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorTableHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorTableHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorTransactionHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorTransactionHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorTransactionHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
 struct ExecutionWriterTarget : public JsonEncodedSubclass {};
 void to_json(json& j, const std::shared_ptr<ExecutionWriterTarget>& p);
 void from_json(const json& j, std::shared_ptr<ExecutionWriterTarget>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorSplit : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorSplit>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorSplit>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorOutputTableHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorOutputTableHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorOutputTableHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorDeleteTableHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorDeleteTableHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorDeleteTableHandle>& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct InputDistribution : public JsonEncodedSubclass {};
@@ -342,23 +318,6 @@ struct ColumnHandle : public JsonEncodedSubclass {
 };
 void to_json(json& j, const std::shared_ptr<ColumnHandle>& p);
 void from_json(const json& j, std::shared_ptr<ColumnHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorTableLayoutHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorTableLayoutHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorTableLayoutHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorInsertTableHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorInsertTableHandle>& p);
-void from_json(const json& j, std::shared_ptr<ConnectorInsertTableHandle>& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct ConnectorMetadataUpdateHandle : public JsonEncodedSubclass {};
-void to_json(json& j, const std::shared_ptr<ConnectorMetadataUpdateHandle>& p);
-void from_json(
-    const json& j,
-    std::shared_ptr<ConnectorMetadataUpdateHandle>& p);
 } // namespace facebook::presto::protocol
 
 namespace facebook::presto::protocol {
@@ -499,6 +458,34 @@ struct AllOrNoneValueSet : public ValueSet {
 };
 void to_json(json& j, const AllOrNoneValueSet& p);
 void from_json(const json& j, AllOrNoneValueSet& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
+struct ConnectorTableHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorTableHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorTableHandle");
+  }
+  static std::shared_ptr<ConnectorTableHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorTableHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorTableHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorTableHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorTableHandle>& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
+struct ConnectorTransactionHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorTransactionHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorTransactionHandle");
+  }
+  static std::shared_ptr<ConnectorTransactionHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorTransactionHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorTransactionHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorTransactionHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorTransactionHandle>& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct AnalyzeTableHandle {
@@ -741,6 +728,20 @@ void from_json(const json& j, Lifespan& p);
 
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+struct ConnectorSplit : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorSplit& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorSplit");
+  }
+  static std::shared_ptr<ConnectorSplit> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorSplit> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorSplit");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorSplit>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorSplit>& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 struct SplitContext {
   bool cacheable = {};
 };
@@ -828,8 +829,14 @@ void to_json(json& j, const BufferInfo& p);
 void from_json(const json& j, BufferInfo& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+enum class BuiltInFunctionKind { ENGINE, PLUGIN };
+extern void to_json(json& j, const BuiltInFunctionKind& e);
+extern void from_json(const json& j, BuiltInFunctionKind& e);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 struct BuiltInFunctionHandle : public FunctionHandle {
   Signature signature = {};
+  BuiltInFunctionKind builtInFunctionKind = {};
 
   BuiltInFunctionHandle() noexcept;
 };
@@ -887,6 +894,20 @@ void to_json(json& j, const ConstantExpression& p);
 void from_json(const json& j, ConstantExpression& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+struct ConnectorOutputTableHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorOutputTableHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorOutputTableHandle");
+  }
+  static std::shared_ptr<ConnectorOutputTableHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorOutputTableHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorOutputTableHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorOutputTableHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorOutputTableHandle>& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 struct OutputTableHandle {
   ConnectorId connectorId = {};
   std::shared_ptr<ConnectorTransactionHandle> transactionHandle = {};
@@ -920,6 +941,20 @@ struct DataOrganizationSpecification {
 };
 void to_json(json& j, const DataOrganizationSpecification& p);
 void from_json(const json& j, DataOrganizationSpecification& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
+struct ConnectorDeleteTableHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorDeleteTableHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorDeleteTableHandle");
+  }
+  static std::shared_ptr<ConnectorDeleteTableHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorDeleteTableHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorDeleteTableHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorDeleteTableHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorDeleteTableHandle>& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct DeleteTableHandle {
@@ -1354,11 +1389,26 @@ struct IndexJoinNode : public PlanNode {
   std::shared_ptr<std::shared_ptr<RowExpression>> filter = {};
   std::shared_ptr<VariableReferenceExpression> probeHashVariable = {};
   std::shared_ptr<VariableReferenceExpression> indexHashVariable = {};
+  List<VariableReferenceExpression> lookupVariables = {};
 
   IndexJoinNode() noexcept;
 };
 void to_json(json& j, const IndexJoinNode& p);
 void from_json(const json& j, IndexJoinNode& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
+struct ConnectorTableLayoutHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorTableLayoutHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorTableLayoutHandle");
+  }
+  static std::shared_ptr<ConnectorTableLayoutHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorTableLayoutHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorTableLayoutHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorTableLayoutHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorTableLayoutHandle>& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct TableHandle {
@@ -1522,6 +1572,20 @@ void to_json(json& j, const IndexSourceNode& p);
 void from_json(const json& j, IndexSourceNode& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+struct ConnectorInsertTableHandle : public JsonEncodedSubclass {
+  static std::string serialize(ConnectorInsertTableHandle& p) {
+    VELOX_NYI("Serialization not implemented for ConnectorInsertTableHandle");
+  }
+  static std::shared_ptr<ConnectorInsertTableHandle> deserialize(
+      const std::string& data,
+      std::shared_ptr<ConnectorInsertTableHandle> p) {
+    VELOX_NYI("Deserialization not implemented for ConnectorInsertTableHandle");
+  }
+};
+void to_json(json& j, const std::shared_ptr<ConnectorInsertTableHandle>& p);
+void from_json(const json& j, std::shared_ptr<ConnectorInsertTableHandle>& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 struct InsertTableHandle {
   ConnectorId connectorId = {};
   std::shared_ptr<ConnectorTransactionHandle> transactionHandle = {};
@@ -1587,6 +1651,7 @@ struct JsonBasedUdfFunctionMetadata {
   std::shared_ptr<String> version = {};
   std::shared_ptr<List<TypeVariableConstraint>> typeVariableConstraints = {};
   std::shared_ptr<List<LongVariableConstraint>> longVariableConstraints = {};
+  std::shared_ptr<URI> executionEndpoint = {};
 };
 void to_json(json& j, const JsonBasedUdfFunctionMetadata& p);
 void from_json(const json& j, JsonBasedUdfFunctionMetadata& p);
@@ -1694,14 +1759,6 @@ struct MergeJoinNode : public PlanNode {
 };
 void to_json(json& j, const MergeJoinNode& p);
 void from_json(const json& j, MergeJoinNode& p);
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-struct MetadataUpdates {
-  ConnectorId connectorId = {};
-  List<std::shared_ptr<ConnectorMetadataUpdateHandle>> metadataUpdates = {};
-};
-void to_json(json& j, const MetadataUpdates& p);
-void from_json(const json& j, MetadataUpdates& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct NodeVersion {
@@ -1991,6 +2048,18 @@ struct RemoteTransactionHandle : public ConnectorTransactionHandle {
 };
 void to_json(json& j, const RemoteTransactionHandle& p);
 void from_json(const json& j, RemoteTransactionHandle& p);
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
+struct RestFunctionHandle : public FunctionHandle {
+  SqlFunctionId functionId = {};
+  String version = {};
+  Signature signature = {};
+  std::shared_ptr<URI> executionEndpoint = {};
+
+  RestFunctionHandle() noexcept;
+};
+void to_json(json& j, const RestFunctionHandle& p);
+void from_json(const json& j, RestFunctionHandle& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 struct RowNumberNode : public PlanNode {
@@ -2292,6 +2361,14 @@ struct TaskStats {
   int64_t runningPartitionedSplitsWeight = {};
   int blockedDrivers = {};
   int completedDrivers = {};
+  int totalNewDrivers = {};
+  int queuedNewDrivers = {};
+  int runningNewDrivers = {};
+  int completedNewDrivers = {};
+  int totalSplits = {};
+  int queuedSplits = {};
+  int runningSplits = {};
+  int completedSplits = {};
   double cumulativeUserMemory = {};
   double cumulativeTotalMemory = {};
   int64_t userMemoryReservationInBytes = {};
@@ -2362,7 +2439,6 @@ struct TaskInfo {
   List<PlanNodeId> noMoreSplits = {};
   TaskStats stats = {};
   bool needsPlan = {};
-  MetadataUpdates metadataUpdates = {};
   String nodeId = {};
 };
 void to_json(json& j, const TaskInfo& p);
@@ -2413,9 +2489,11 @@ void to_json(json& j, const UnnestNode& p);
 void from_json(const json& j, UnnestNode& p);
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
-struct UpdateHandle {
+struct UpdateHandle : public ExecutionWriterTarget {
   TableHandle handle = {};
   SchemaTableName schemaTableName = {};
+
+  UpdateHandle() noexcept;
 };
 void to_json(json& j, const UpdateHandle& p);
 void from_json(const json& j, UpdateHandle& p);

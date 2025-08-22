@@ -66,8 +66,10 @@ import static com.facebook.presto.SystemSessionProperties.JOIN_DISTRIBUTION_TYPE
 import static com.facebook.presto.SystemSessionProperties.JOIN_REORDERING_STRATEGY;
 import static com.facebook.presto.SystemSessionProperties.LEAF_NODE_LIMIT_ENABLED;
 import static com.facebook.presto.SystemSessionProperties.MAX_LEAF_NODES_IN_PLAN;
+import static com.facebook.presto.SystemSessionProperties.NATIVE_EXECUTION_ENABLED;
 import static com.facebook.presto.SystemSessionProperties.OFFSET_CLAUSE_ENABLED;
 import static com.facebook.presto.SystemSessionProperties.OPTIMIZE_HASH_GENERATION;
+import static com.facebook.presto.SystemSessionProperties.PREFER_SORT_MERGE_JOIN;
 import static com.facebook.presto.SystemSessionProperties.PUSH_REMOTE_EXCHANGE_THROUGH_GROUP_ID;
 import static com.facebook.presto.SystemSessionProperties.REMOVE_CROSS_JOIN_WITH_CONSTANT_SINGLE_ROW_INPUT;
 import static com.facebook.presto.SystemSessionProperties.SIMPLIFY_PLAN_WITH_EMPTY_INPUT;
@@ -108,6 +110,7 @@ import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.groupi
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.join;
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.limit;
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.markDistinct;
+import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.mergeJoin;
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.node;
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.output;
 import static com.facebook.presto.sql.planner.assertions.PlanMatchPattern.project;
@@ -129,6 +132,7 @@ import static com.facebook.presto.sql.planner.plan.ExchangeNode.Scope.REMOTE_STR
 import static com.facebook.presto.sql.planner.plan.ExchangeNode.Type.GATHER;
 import static com.facebook.presto.sql.planner.plan.ExchangeNode.Type.REPARTITION;
 import static com.facebook.presto.sql.planner.plan.ExchangeNode.Type.REPLICATE;
+import static com.facebook.presto.sql.tree.SortItem.NullOrdering.FIRST;
 import static com.facebook.presto.sql.tree.SortItem.NullOrdering.LAST;
 import static com.facebook.presto.sql.tree.SortItem.Ordering.ASCENDING;
 import static com.facebook.presto.sql.tree.SortItem.Ordering.DESCENDING;
@@ -523,6 +527,64 @@ public class TestLogicalPlanner
                                 any(
                                         tableScan("orders", ImmutableMap.of("ORDERS_OK", "orderkey"))),
                                 anyTree(
+                                        tableScan("lineitem", ImmutableMap.of("LINEITEM_OK", "orderkey"))))));
+    }
+
+    @Test
+    public void testSortMergeJoin()
+    {
+        Session preferSortMergeJoin = Session.builder(noJoinReordering())
+                .setSystemProperty(NATIVE_EXECUTION_ENABLED, "true")
+                .setSystemProperty(PREFER_SORT_MERGE_JOIN, "true")
+                .setSystemProperty(DISTRIBUTED_SORT, "false")
+                .build();
+
+        // Both sides are not sorted.
+        assertPlan("SELECT o.orderkey FROM orders o INNER JOIN lineitem l ON o.custkey = l.partkey",
+                preferSortMergeJoin,
+                anyTree(
+                        mergeJoin(INNER, ImmutableList.of(equiJoinClause("ORDERS_CK", "LINEITEM_PK")), Optional.empty(),
+                                sort(
+                                        ImmutableList.of(sort("ORDERS_CK", ASCENDING, FIRST)),
+                                        exchange(LOCAL, GATHER, ImmutableList.of(),
+                                                tableScan("orders", ImmutableMap.of("ORDERS_CK", "custkey")))),
+                                sort(
+                                        ImmutableList.of(sort("LINEITEM_PK", ASCENDING, FIRST)),
+                                        exchange(LOCAL, GATHER, ImmutableList.of(),
+                                                tableScan("lineitem", ImmutableMap.of("LINEITEM_PK", "partkey")))))));
+
+        // Left side is sorted.
+        assertPlan("SELECT o.orderkey FROM orders o INNER JOIN lineitem l ON o.orderkey = l.partkey",
+                preferSortMergeJoin,
+                anyTree(
+                        mergeJoin(INNER, ImmutableList.of(equiJoinClause("ORDERS_OK", "LINEITEM_PK")), Optional.empty(),
+                                exchange(LOCAL, GATHER, ImmutableList.of(),
+                                        tableScan("orders", ImmutableMap.of("ORDERS_OK", "orderkey"))),
+                                sort(
+                                        ImmutableList.of(sort("LINEITEM_PK", ASCENDING, FIRST)),
+                                        exchange(LOCAL, GATHER, ImmutableList.of(),
+                                                tableScan("lineitem", ImmutableMap.of("LINEITEM_PK", "partkey")))))));
+
+        // Right side is sorted.
+        assertPlan("SELECT o.orderkey FROM orders o INNER JOIN lineitem l ON o.custkey = l.orderkey",
+                preferSortMergeJoin,
+                anyTree(
+                        mergeJoin(INNER, ImmutableList.of(equiJoinClause("ORDERS_CK", "LINEITEM_OK")), Optional.empty(),
+                                sort(
+                                        ImmutableList.of(sort("ORDERS_CK", ASCENDING, FIRST)),
+                                        exchange(LOCAL, GATHER, ImmutableList.of(),
+                                                tableScan("orders", ImmutableMap.of("ORDERS_CK", "custkey")))),
+                                exchange(LOCAL, GATHER, ImmutableList.of(),
+                                        tableScan("lineitem", ImmutableMap.of("LINEITEM_OK", "orderkey"))))));
+
+        // Both sides are sorted.
+        assertPlan("SELECT o.orderkey FROM orders o INNER JOIN lineitem l ON o.orderkey = l.orderkey",
+                preferSortMergeJoin,
+                anyTree(
+                        mergeJoin(INNER, ImmutableList.of(equiJoinClause("ORDERS_OK", "LINEITEM_OK")), Optional.empty(),
+                                exchange(LOCAL, GATHER, ImmutableList.of(),
+                                        tableScan("orders", ImmutableMap.of("ORDERS_OK", "orderkey"))),
+                                exchange(LOCAL, GATHER, ImmutableList.of(),
                                         tableScan("lineitem", ImmutableMap.of("LINEITEM_OK", "orderkey"))))));
     }
 
@@ -1587,6 +1649,35 @@ public class TestLogicalPlanner
                                                                 any(
                                                                         tableScan("nation", ImmutableMap.of("name", "name", "regionkey", "regionkey"))))))
                                                 .withAlias("row_num", new RowNumberSymbolMatcher())))));
+    }
+
+    @Test
+    public void testOffsetWithLimit()
+    {
+        Session enableOffsetWithConcurrency = Session.builder(this.getQueryRunner().getDefaultSession())
+                .setSystemProperty(OFFSET_CLAUSE_ENABLED, "true")
+                .setSystemProperty("task_concurrency", "2") // task_concurrency > 1 required to add possible local exchanges that fail this test for incorrect AddLocalExchanges
+                .build();
+
+        assertPlanWithSession("SELECT totalprice FROM orders ORDER BY totalprice OFFSET 1 LIMIT 512",
+                enableOffsetWithConcurrency,
+                false,
+                any(
+                        strictProject(
+                                ImmutableMap.of("totalprice", new ExpressionMatcher("totalprice")),
+                                limit(
+                                        512,
+                                        filter(
+                                                "row_num > BIGINT '1'",
+                                                rowNumber(
+                                                        pattern -> pattern
+                                                                .partitionBy(ImmutableList.of()),
+                                                        anyTree(
+                                                                sort(
+                                                                        ImmutableList.of(sort("totalprice", ASCENDING, LAST)),
+                                                                        any(
+                                                                                tableScan("orders", ImmutableMap.of("totalprice", "totalprice"))))))
+                                                        .withAlias("row_num", new RowNumberSymbolMatcher()))))));
     }
 
     private Session noJoinReordering()

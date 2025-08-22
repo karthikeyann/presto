@@ -14,14 +14,17 @@
 package com.facebook.presto.plugin.jdbc;
 
 import com.facebook.airlift.configuration.testing.ConfigAssertions;
+import com.facebook.airlift.units.Duration;
 import com.google.common.collect.ImmutableMap;
-import io.airlift.units.Duration;
+import com.google.inject.ConfigurationException;
 import org.testng.annotations.Test;
 
 import java.util.Map;
 
 import static java.util.concurrent.TimeUnit.MINUTES;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.expectThrows;
 
 public class TestBaseJdbcConfig
 {
@@ -67,5 +70,70 @@ public class TestBaseJdbcConfig
                 .setCaseSensitiveNameMatching(true);
 
         ConfigAssertions.assertFullMapping(properties, expected);
+    }
+
+    @Test
+    public void testValidConfigValidation()
+    {
+        BaseJdbcConfig config = new BaseJdbcConfig();
+        config.setConnectionUrl("jdbc:mysql://localhost:3306/test");
+
+        // Should not throw any exception
+        config.validateConfig();
+
+        assertEquals(config.getConnectionUrl(), "jdbc:mysql://localhost:3306/test");
+    }
+
+    @Test
+    public void testNullConnectionUrlValidation()
+    {
+        BaseJdbcConfig config = new BaseJdbcConfig();
+        // connectionUrl is null by default
+
+        ConfigurationException exception = expectThrows(
+                ConfigurationException.class,
+                config::validateConfig);
+        assertEquals(exception.getErrorMessages().iterator().next().getMessage(),
+                "connection-url is required but was not provided");
+    }
+
+    @Test
+    public void testMutuallyExclusiveNameMatchingOptions()
+    {
+        BaseJdbcConfig config = new BaseJdbcConfig();
+        config.setConnectionUrl("jdbc:mysql://localhost:3306/test");
+        config.setCaseInsensitiveNameMatching(true);
+        config.setCaseSensitiveNameMatching(true);
+
+        ConfigurationException exception = expectThrows(
+                ConfigurationException.class,
+                config::validateConfig);
+        assertEquals(exception.getErrorMessages().iterator().next().getMessage(),
+                "Only one of 'case-insensitive-name-matching=true' or 'case-sensitive-name-matching=true' can be set. " +
+                "These options are mutually exclusive.");
+    }
+
+    @Test
+    public void testCaseInsensitiveNameMatchingOnly()
+    {
+        BaseJdbcConfig config = new BaseJdbcConfig();
+        config.setConnectionUrl("jdbc:mysql://localhost:3306/test");
+        config.setCaseInsensitiveNameMatching(true);
+        config.setCaseSensitiveNameMatching(false);
+
+        // Should not throw any exception
+        config.validateConfig();
+    }
+
+    @Test
+    public void testCaseSensitiveNameMatchingOnly()
+    {
+        BaseJdbcConfig config = new BaseJdbcConfig();
+        config.setConnectionUrl("jdbc:mysql://localhost:3306/test");
+        config.setCaseInsensitiveNameMatching(false);
+        config.setCaseSensitiveNameMatching(true);
+
+        // Should not throw any exception
+        config.validateConfig();
     }
 }

@@ -29,6 +29,7 @@ import com.facebook.presto.spi.plan.InputDistribution;
 import com.facebook.presto.spi.plan.JoinNode;
 import com.facebook.presto.spi.plan.LimitNode;
 import com.facebook.presto.spi.plan.MarkDistinctNode;
+import com.facebook.presto.spi.plan.MergeJoinNode;
 import com.facebook.presto.spi.plan.OrderingScheme;
 import com.facebook.presto.spi.plan.OutputNode;
 import com.facebook.presto.spi.plan.Partitioning;
@@ -78,6 +79,7 @@ import static com.facebook.presto.SystemSessionProperties.isNativeJoinBuildParti
 import static com.facebook.presto.SystemSessionProperties.isQuickDistinctLimitEnabled;
 import static com.facebook.presto.SystemSessionProperties.isSegmentedAggregationEnabled;
 import static com.facebook.presto.SystemSessionProperties.isSpillEnabled;
+import static com.facebook.presto.SystemSessionProperties.preferSortMergeJoin;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.common.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.operator.aggregation.AggregationUtils.hasSingleNodeExecutionPreference;
@@ -307,11 +309,10 @@ public class AddLocalExchanges
             }
 
             // final limit requires that all data be in one stream
-            // also, a final changes the input organization completely, so we do not pass through parent preferences
             return planAndEnforceChildren(
                     node,
                     singleStream(),
-                    defaultParallelism(session));
+                    parentPreferences.withDefaultParallelism(session));
         }
 
         @Override
@@ -886,6 +887,17 @@ public class AddLocalExchanges
             PlanWithProperties build = planAndEnforce(node.getRight(), singleStream(), singleStream());
 
             return rebaseAndDeriveProperties(node, ImmutableList.of(probe, build));
+        }
+
+        @Override
+        public PlanWithProperties visitMergeJoin(MergeJoinNode node, StreamPreferredProperties parentPreferences)
+        {
+            if (preferSortMergeJoin(session)) {
+                PlanWithProperties probe = planAndEnforce(node.getLeft(), singleStream(), singleStream());
+                PlanWithProperties build = planAndEnforce(node.getRight(), singleStream(), singleStream());
+                return rebaseAndDeriveProperties(node, ImmutableList.of(probe, build));
+            }
+            return super.visitMergeJoin(node, parentPreferences);
         }
 
         @Override

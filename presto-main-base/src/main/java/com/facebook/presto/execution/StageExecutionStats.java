@@ -15,6 +15,7 @@ package com.facebook.presto.execution;
 
 import com.facebook.airlift.stats.Distribution;
 import com.facebook.airlift.stats.Distribution.DistributionSnapshot;
+import com.facebook.airlift.units.Duration;
 import com.facebook.presto.common.RuntimeStats;
 import com.facebook.presto.operator.BlockedReason;
 import com.facebook.presto.operator.OperatorStats;
@@ -23,9 +24,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import io.airlift.units.Duration;
-
-import javax.annotation.concurrent.Immutable;
+import com.google.errorprone.annotations.Immutable;
 
 import java.util.List;
 import java.util.OptionalDouble;
@@ -56,6 +55,16 @@ public class StageExecutionStats
     private final int runningDrivers;
     private final int blockedDrivers;
     private final int completedDrivers;
+
+    private final int totalNewDrivers;
+    private final int queuedNewDrivers;
+    private final int runningNewDrivers;
+    private final int completedNewDrivers;
+
+    private final int totalSplits;
+    private final int queuedSplits;
+    private final int runningSplits;
+    private final int completedSplits;
 
     private final double cumulativeUserMemory;
     private final double cumulativeTotalMemory;
@@ -110,6 +119,16 @@ public class StageExecutionStats
             @JsonProperty("runningDrivers") int runningDrivers,
             @JsonProperty("blockedDrivers") int blockedDrivers,
             @JsonProperty("completedDrivers") int completedDrivers,
+
+            @JsonProperty("totalNewDrivers") int totalNewDrivers,
+            @JsonProperty("queuedNewDrivers") int queuedNewDrivers,
+            @JsonProperty("runningNewDrivers") int runningNewDrivers,
+            @JsonProperty("completedNewDrivers") int completedNewDrivers,
+
+            @JsonProperty("totalSplits") int totalSplits,
+            @JsonProperty("queuedSplits") int queuedSplits,
+            @JsonProperty("runningSplits") int runningSplits,
+            @JsonProperty("completedSplits") int completedSplits,
 
             @JsonProperty("cumulativeUserMemory") double cumulativeUserMemory,
             @JsonProperty("cumulativeTotalMemory") double cumulativeTotalMemory,
@@ -169,18 +188,31 @@ public class StageExecutionStats
         this.blockedDrivers = blockedDrivers;
         checkArgument(completedDrivers >= 0, "completedDrivers is negative");
         this.completedDrivers = completedDrivers;
-        checkArgument(cumulativeUserMemory >= 0, "cumulativeUserMemory is negative");
-        this.cumulativeUserMemory = cumulativeUserMemory;
-        checkArgument(cumulativeTotalMemory >= 0, "cumulativeTotalMemory is negative");
-        this.cumulativeTotalMemory = cumulativeTotalMemory;
-        checkArgument(userMemoryReservationInBytes >= 0, "userMemoryReservationInBytes is negative");
-        this.userMemoryReservationInBytes = userMemoryReservationInBytes;
-        checkArgument(totalMemoryReservationInBytes >= 0, "totalMemoryReservationInBytes is negative");
-        this.totalMemoryReservationInBytes = totalMemoryReservationInBytes;
-        checkArgument(peakUserMemoryReservationInBytes >= 0, "peakUserMemoryReservationInBytes is negative");
-        this.peakUserMemoryReservationInBytes = peakUserMemoryReservationInBytes;
-        checkArgument(peakNodeTotalMemoryReservationInBytes >= 0, "peakNodeTotalMemoryReservationInBytes is negative");
-        this.peakNodeTotalMemoryReservationInBytes = peakNodeTotalMemoryReservationInBytes;
+
+        checkArgument(totalNewDrivers >= 0, "totalNewDrivers is negative");
+        this.totalNewDrivers = totalNewDrivers;
+        checkArgument(queuedNewDrivers >= 0, "queuedNewDrivers is negative");
+        this.queuedNewDrivers = queuedNewDrivers;
+        checkArgument(runningNewDrivers >= 0, "runningNewDrivers is negative");
+        this.runningNewDrivers = runningNewDrivers;
+        checkArgument(completedNewDrivers >= 0, "completedNewDrivers is negative");
+        this.completedNewDrivers = completedNewDrivers;
+
+        checkArgument(totalSplits >= 0, "totalSplits is negative");
+        this.totalSplits = totalSplits;
+        checkArgument(queuedSplits >= 0, "queuedSplits is negative");
+        this.queuedSplits = queuedSplits;
+        checkArgument(runningSplits >= 0, "runningSplits is negative");
+        this.runningSplits = runningSplits;
+        checkArgument(completedSplits >= 0, "completedSplits is negative");
+        this.completedSplits = completedSplits;
+
+        this.cumulativeUserMemory = (cumulativeUserMemory >= 0) ? cumulativeUserMemory : Long.MAX_VALUE;
+        this.cumulativeTotalMemory = (cumulativeTotalMemory >= 0) ? cumulativeTotalMemory : Long.MAX_VALUE;
+        this.userMemoryReservationInBytes = (userMemoryReservationInBytes >= 0) ? userMemoryReservationInBytes : Long.MAX_VALUE;
+        this.totalMemoryReservationInBytes = (totalMemoryReservationInBytes >= 0) ? totalMemoryReservationInBytes : Long.MAX_VALUE;
+        this.peakUserMemoryReservationInBytes = (peakUserMemoryReservationInBytes >= 0) ? peakUserMemoryReservationInBytes : Long.MAX_VALUE;
+        this.peakNodeTotalMemoryReservationInBytes = (peakNodeTotalMemoryReservationInBytes >= 0) ? peakNodeTotalMemoryReservationInBytes : Long.MAX_VALUE;
 
         this.totalScheduledTime = requireNonNull(totalScheduledTime, "totalScheduledTime is null");
         this.totalCpuTime = requireNonNull(totalCpuTime, "totalCpuTime is null");
@@ -189,29 +221,20 @@ public class StageExecutionStats
         this.fullyBlocked = fullyBlocked;
         this.blockedReasons = ImmutableSet.copyOf(requireNonNull(blockedReasons, "blockedReasons is null"));
 
-        checkArgument(totalAllocationInBytes >= 0, "totalAllocationInBytes is negative");
-        this.totalAllocationInBytes = totalAllocationInBytes;
-        checkArgument(rawInputDataSizeInBytes >= 0, "rawInputDataSizeInBytes is negative");
-        this.rawInputDataSizeInBytes = rawInputDataSizeInBytes;
-        checkArgument(rawInputPositions >= 0, "rawInputPositions is negative");
-        this.rawInputPositions = rawInputPositions;
+        this.totalAllocationInBytes = (totalAllocationInBytes >= 0) ? totalAllocationInBytes : Long.MAX_VALUE;
+        this.rawInputDataSizeInBytes = (rawInputDataSizeInBytes >= 0) ? rawInputDataSizeInBytes : Long.MAX_VALUE;
+        this.rawInputPositions = (rawInputPositions >= 0) ? rawInputPositions : Long.MAX_VALUE;
 
-        checkArgument(processedInputDataSizeInBytes >= 0, "processedInputDataSizeInBytes is negative");
-        this.processedInputDataSizeInBytes = processedInputDataSizeInBytes;
-        checkArgument(processedInputPositions >= 0, "processedInputPositions is negative");
-        this.processedInputPositions = processedInputPositions;
+        this.processedInputDataSizeInBytes = (processedInputDataSizeInBytes >= 0) ? processedInputDataSizeInBytes : Long.MAX_VALUE;
+        this.processedInputPositions = (processedInputPositions >= 0) ? processedInputPositions : Long.MAX_VALUE;
 
-        checkArgument(bufferedDataSizeInBytes >= 0, "bufferedDataSizeInBytes is negative");
-        this.bufferedDataSizeInBytes = bufferedDataSizeInBytes;
+        this.bufferedDataSizeInBytes = (bufferedDataSizeInBytes >= 0) ? bufferedDataSizeInBytes : Long.MAX_VALUE;
 
-        // An overflow could have occurred on this stat - handle this gracefully.
         this.outputDataSizeInBytes = (outputDataSizeInBytes >= 0) ? outputDataSizeInBytes : Long.MAX_VALUE;
 
-        checkArgument(outputPositions >= 0, "outputPositions is negative");
-        this.outputPositions = outputPositions;
+        this.outputPositions = (outputPositions >= 0) ? outputPositions : Long.MAX_VALUE;
 
-        checkArgument(physicalWrittenDataSizeInBytes >= 0, "writtenDataSizeInBytes is negative");
-        this.physicalWrittenDataSizeInBytes = physicalWrittenDataSizeInBytes;
+        this.physicalWrittenDataSizeInBytes = (physicalWrittenDataSizeInBytes >= 0) ? physicalWrittenDataSizeInBytes : Long.MAX_VALUE;
 
         this.gcInfo = requireNonNull(gcInfo, "gcInfo is null");
 
@@ -289,6 +312,54 @@ public class StageExecutionStats
     public int getCompletedDrivers()
     {
         return completedDrivers;
+    }
+
+    @JsonProperty
+    public int getTotalNewDrivers()
+    {
+        return totalNewDrivers;
+    }
+
+    @JsonProperty
+    public int getQueuedNewDrivers()
+    {
+        return queuedNewDrivers;
+    }
+
+    @JsonProperty
+    public int getRunningNewDrivers()
+    {
+        return runningNewDrivers;
+    }
+
+    @JsonProperty
+    public int getCompletedNewDrivers()
+    {
+        return completedNewDrivers;
+    }
+
+    @JsonProperty
+    public int getTotalSplits()
+    {
+        return totalSplits;
+    }
+
+    @JsonProperty
+    public int getQueuedSplits()
+    {
+        return queuedSplits;
+    }
+
+    @JsonProperty
+    public int getRunningSplits()
+    {
+        return runningSplits;
+    }
+
+    @JsonProperty
+    public int getCompletedSplits()
+    {
+        return completedSplits;
     }
 
     @JsonProperty
@@ -450,6 +521,14 @@ public class StageExecutionStats
                 queuedDrivers,
                 runningDrivers,
                 completedDrivers,
+                totalNewDrivers,
+                queuedNewDrivers,
+                runningNewDrivers,
+                completedNewDrivers,
+                totalSplits,
+                queuedSplits,
+                runningSplits,
+                completedSplits,
                 rawInputDataSizeInBytes,
                 rawInputPositions,
                 cumulativeUserMemory,
@@ -470,6 +549,15 @@ public class StageExecutionStats
                 0L,
                 new Distribution().snapshot(),
                 0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+
                 0,
                 0,
                 0,

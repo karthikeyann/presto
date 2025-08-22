@@ -57,7 +57,29 @@ across nodes in the cluster. It can be disabled when it is known that the
 output data set is not skewed in order to avoid the overhead of hashing and
 redistributing all the data across the network. 
 
-The corresponding session property is :ref:`admin/properties-session:\`\`redistribute_writes\`\``. 
+The corresponding session property is :ref:`admin/properties-session:\`\`redistribute_writes\`\``.
+
+``check-access-control-on-utilized-columns-only``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``true``
+
+Apply access control rules on only those columns that are required to produce the query output.
+
+Note: Setting this property to true with the following kinds of queries:
+
+* queries that have ``USING`` in a join condition
+* queries that have duplicate named common table expressions (CTE)
+
+causes the query to be evaluated as if the property is set to false and checks the access control for all columns.
+
+To avoid these problems:
+
+* replace all ``USING`` join conditions in a query with ``ON`` join conditions
+* set unique names for all CTEs in a query
+
+The corresponding session property is :ref:`admin/properties-session:\`\`check_access_control_on_utilized_columns_only\`\``.
 
 ``eager-plan-validation-enabled``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -126,6 +148,16 @@ See :ref:`troubleshoot/query:\`\`Request Header Fields Too Large\`\``.
 To enable the ``OFFSET`` clause in SQL query expressions, set this property to ``true``.
 
 The corresponding session property is :ref:`admin/properties-session:\`\`offset_clause_enabled\`\``. 
+
+``max-serializable-object-size``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``long``
+* **Default value:** ``1000``
+
+Maximum object size in bytes that can be considered serializable in a function call by the coordinator.
+
+The corresponding session property is :ref:`admin/properties-session:\`\`max_serializable_object_size\`\``. 
 
 Memory Management Properties
 ----------------------------
@@ -1115,3 +1147,57 @@ This property can be used to configure how long a query runs without contact
 from the client application, such as the CLI, before it's abandoned.
 
 The corresponding session property is :ref:`admin/properties-session:\`\`query_client_timeout\`\``.
+
+``query.max-queued-time``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``Duration``
+* **Default value:** ``100d``
+
+Use to configure how long a query can be queued before it is terminated.
+
+The corresponding session property is :ref:`admin/properties-session:\`\`query_max_queued_time\`\``.
+
+Query Retry Properties
+----------------------
+
+``retry.enabled``
+^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``true``
+
+Enable cross-cluster retry functionality. When enabled, queries that fail with
+specific error codes can be automatically retried on a backup cluster if a
+retry URL is provided.
+
+``retry.allowed-domains``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``string``
+* **Default value:** (empty, signifying current second-level domain allowed only)
+
+Comma-separated list of allowed domains for retry URLs. Supports wildcards
+like ``*.example.com``. For example: ``cluster1.example.com,*.backup.example.net``.
+When empty (default), only retry URLs from the same domain as the current server
+are allowed.
+
+``retry.require-https``
+^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``false``
+
+Require HTTPS for retry URLs. When enabled, only HTTPS URLs will be accepted
+for cross-cluster retry operations.
+
+``retry.cross-cluster-error-codes``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``string``
+* **Default value:** ``REMOTE_TASK_ERROR``
+
+Comma-separated list of error codes that allow cross-cluster retry. When a query
+fails with one of these error codes, it can be automatically retried on a backup
+cluster if a retry URL is provided. Available error codes include standard Presto
+error codes such as ``REMOTE_TASK_ERROR``, ``CLUSTER_OUT_OF_MEMORY``, etc.

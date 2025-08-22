@@ -845,7 +845,16 @@ public class PlanBuilder
         return new JoinNode(Optional.empty(), idAllocator.getNextId(), type, left, right, criteria, outputVariables, filter, leftHashVariable, rightHashVariable, distributionType, dynamicFilters);
     }
 
-    public PlanNode indexJoin(JoinType type, TableScanNode probe, TableScanNode index)
+    public PlanNode indexJoin(JoinType type, PlanNode probe, PlanNode index)
+    {
+        return indexJoin(type, probe, index, emptyList(), Optional.empty());
+    }
+
+    public PlanNode indexJoin(JoinType type,
+            PlanNode probe,
+            PlanNode index,
+            List<IndexJoinNode.EquiJoinClause> criteria,
+            Optional<RowExpression> filter)
     {
         return new IndexJoinNode(
                 Optional.empty(),
@@ -853,10 +862,11 @@ public class PlanBuilder
                 type,
                 probe,
                 index,
-                emptyList(),
+                criteria,
+                filter,
                 Optional.empty(),
                 Optional.empty(),
-                Optional.empty());
+                index.getOutputVariables());
     }
 
     public CteProducerNode cteProducerNode(String ctename,

@@ -43,7 +43,7 @@ It will also consider switching the left and right inputs to the join.  In ``AUT
 mode, Presto will default to hash distributed joins if no cost could be computed, such as if
 the tables do not have statistics. 
 
-The corresponding configuration property is :ref:`admin/properties:\`\`join-distribution-type\`\``. 
+The corresponding configuration property is :ref:`admin/properties:\`\`join-distribution-type\`\``.
 
 
 ``redistribute_writes``
@@ -103,6 +103,38 @@ To enable the ``OFFSET`` clause in SQL query expressions, set this property to `
 
 The corresponding configuration property is :ref:`admin/properties:\`\`offset-clause-enabled\`\``.
 
+``check_access_control_on_utilized_columns_only``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``true``
+
+Apply access control rules on only those columns that are required to produce the query output.
+
+Note: Setting this property to true with the following kinds of queries:
+
+* queries that have ``USING`` in a join condition
+* queries that have duplicate named common table expressions (CTE)
+
+causes the query to be evaluated as if the property is set to false and checks the access control for all columns.
+
+To avoid these problems:
+
+* replace all ``USING`` join conditions in a query with ``ON`` join conditions
+* set unique names for all CTEs in a query
+
+The corresponding configuration property is :ref:`admin/properties:\`\`check-access-control-on-utilized-columns-only\`\``.
+
+``max_serializable_object_size``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``long``
+* **Default value:** ``1000``
+
+Maximum object size in bytes that can be considered serializable in a function call by the coordinator.
+
+The corresponding configuration property is :ref:`admin/properties:\`\`max-serializable-object-size\`\``.
+
 Spilling Properties
 -------------------
 
@@ -121,7 +153,7 @@ window functions, sorting and other join types.
 
 Be aware that this is an experimental feature and should be used with care.
 
-The corresponding configuration property is :ref:`admin/properties:\`\`experimental.spill-enabled\`\``. 
+The corresponding configuration property is :ref:`admin/properties:\`\`experimental.spill-enabled\`\``.
 
 ``join_spill_enabled``
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -393,6 +425,15 @@ Run the following command to use ``optimizers_to_enable_verbose_runtime_stats``:
 
 ``SET SESSION optimizers_to_enable_verbose_runtime_stats=ALL;``
 
+``pushdown_subfields_for_map_functions``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+* **Type:** ``boolean``
+* **Default value:** ``true``
+
+Use this to optimize the ``map_filter()`` and ``map_subset()`` function.
+
+It controls if subfields access is executed at the data source or not.
+
 JDBC Properties
 ---------------
 
@@ -454,3 +495,22 @@ This property can be used to configure how long a query runs without contact
 from the client application, such as the CLI, before it's abandoned.
 
 The corresponding configuration property is :ref:`admin/properties:\`\`query.client.timeout\`\``.
+
+``query_priority``
+^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``int``
+* **Default value:** ``1``
+
+This property defines the priority of queries for execution and plays an important role in query admission.
+Queries with higher priority are scheduled first than the ones with lower priority. Higher number indicates higher priority.
+
+``query_max_queued_time``
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``Duration``
+* **Default value:** ``100d``
+
+Use to configure how long a query can be queued before it is terminated.
+
+The corresponding configuration property is :ref:`admin/properties:\`\`query.max-queued-time\`\``.

@@ -326,12 +326,20 @@ public class PruneUnreferencedOutputs
         @Override
         public PlanNode visitIndexJoin(IndexJoinNode node, RewriteContext<Set<VariableReferenceExpression>> context)
         {
+            Set<VariableReferenceExpression> expectedFilterInputs = new HashSet<>();
+            if (node.getFilter().isPresent()) {
+                expectedFilterInputs = ImmutableSet.<VariableReferenceExpression>builder()
+                        .addAll(VariablesExtractor.extractUnique(node.getFilter().get()))
+                        .build();
+            }
+
             ImmutableSet.Builder<VariableReferenceExpression> probeInputsBuilder = ImmutableSet.builder();
             probeInputsBuilder.addAll(context.get())
                     .addAll(Iterables.transform(node.getCriteria(), IndexJoinNode.EquiJoinClause::getProbe));
             if (node.getProbeHashVariable().isPresent()) {
                 probeInputsBuilder.add(node.getProbeHashVariable().get());
             }
+            probeInputsBuilder.addAll(expectedFilterInputs);
             Set<VariableReferenceExpression> probeInputs = probeInputsBuilder.build();
 
             ImmutableSet.Builder<VariableReferenceExpression> indexInputBuilder = ImmutableSet.builder();
@@ -340,6 +348,9 @@ public class PruneUnreferencedOutputs
             if (node.getIndexHashVariable().isPresent()) {
                 indexInputBuilder.add(node.getIndexHashVariable().get());
             }
+            indexInputBuilder.addAll(expectedFilterInputs);
+            // Lookup variables must not be pruned.
+            indexInputBuilder.addAll(node.getLookupVariables());
             Set<VariableReferenceExpression> indexInputs = indexInputBuilder.build();
 
             PlanNode probeSource = context.rewrite(node.getProbeSource(), probeInputs);
@@ -355,7 +366,8 @@ public class PruneUnreferencedOutputs
                     node.getCriteria(),
                     node.getFilter(),
                     node.getProbeHashVariable(),
-                    node.getIndexHashVariable());
+                    node.getIndexHashVariable(),
+                    node.getLookupVariables());
         }
 
         @Override

@@ -31,8 +31,7 @@ import com.facebook.presto.spi.SchemaTablePrefix;
 import com.facebook.presto.spi.connector.ConnectorMetadata;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import java.util.List;
 import java.util.Map;
@@ -121,7 +120,7 @@ public class AtopMetadata
         ImmutableList.Builder<ColumnMetadata> columns = ImmutableList.builder();
         for (AtopColumn column : atopTableHandle.getTable().getColumns()) {
             columns.add(ColumnMetadata.builder()
-                    .setName(column.getName())
+                    .setName(normalizeIdentifier(session, column.getName()))
                     .setType(typeManager.getType(column.getType()))
                     .build());
         }

@@ -35,8 +35,7 @@ import com.facebook.presto.sql.tree.NodeRef;
 import com.facebook.presto.sql.tree.Parameter;
 import com.facebook.presto.transaction.TransactionManager;
 import com.google.common.util.concurrent.ListenableFuture;
-
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import java.util.List;
 import java.util.Map;
@@ -95,7 +94,7 @@ public class CreateMaterializedViewTask
         List<ColumnMetadata> columnMetadata = analysis.getOutputDescriptor(statement.getQuery())
                 .getVisibleFields().stream()
                 .map(field -> ColumnMetadata.builder()
-                        .setName(field.getName().get())
+                        .setName(metadata.normalizeIdentifier(session, viewName.getCatalogName(), field.getName().get()))
                         .setType(field.getType())
                         .build())
                 .collect(toImmutableList());

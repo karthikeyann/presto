@@ -14,10 +14,12 @@
 package com.facebook.presto.spark.execution.property;
 
 import com.facebook.airlift.configuration.Config;
+import com.facebook.airlift.units.DataSize;
+import com.facebook.airlift.units.Duration;
 import com.google.common.collect.ImmutableMap;
-import io.airlift.units.DataSize;
 
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static java.util.Objects.requireNonNull;
 
@@ -34,7 +36,6 @@ public class NativeExecutionSystemConfig
     private static final String HTTP_SERVER_HTTP_PORT = "http-server.http.port";
     private static final String HTTP_SERVER_REUSE_PORT = "http-server.reuse-port";
     private static final String HTTP_SERVER_BIND_TO_NODE_INTERNAL_ADDRESS_ONLY_ENABLED = "http-server.bind-to-node-internal-address-only-enabled";
-    private static final String REGISTER_TEST_FUNCTIONS = "register-test-functions";
     // Number of I/O thread to use for serving http request on presto-native (proxygen server)
     // this excludes worker thread used by velox
     private static final String HTTP_SERVER_HTTPS_PORT = "http-server.https.port";
@@ -81,22 +82,17 @@ public class NativeExecutionSystemConfig
     private static final String MEMORY_ARBITRATOR_CAPACITY_GB = "query-memory-gb";
     // Set memory arbitrator reserved capacity. Since there is only one query
     // running at Presto-on-Spark at a time, then we shall set this to zero.
-    private static final String MEMORY_ARBITRATOR_RESERVED_CAPACITY_GB = "query-reserved-memory-gb";
+    private static final String SHARED_ARBITRATOR_RESERVED_CAPACITY = "shared-arbitrator.reserved-capacity";
     // Set the initial memory capacity when we create a query memory pool. For
     // Presto-on-Spark, we set it to 'query-memory-gb' to allocate all the
     // memory arbitrator capacity to the query memory pool on its creation as
     // there is only one query running at a time.
-    private static final String MEMORY_POOL_INIT_CAPACITY = "memory-pool-init-capacity";
+    private static final String SHARED_ARBITRATOR_MEMORY_POOL_INITIAL_CAPACITY = "shared-arbitrator.memory-pool-initial-capacity";
     // Set the reserved memory capacity when we create a query memory pool. For
     // Presto-on-Spark, we set this to zero as there is only one query running
     // at a time.
-    private static final String MEMORY_POOL_RESERVED_CAPACITY = "memory-pool-reserved-capacity";
-    // Set the minimal memory capacity transfer between memory pools under
-    // memory arbitration. For Presto-on-Spark, there is only one query running
-    // so this specified how much memory to reclaim from a query when it runs
-    // out of memory.
-    private static final String MEMORY_POOL_TRANSFER_CAPACITY = "memory-pool-transfer-capacity";
-    private static final String MEMORY_RECLAIM_WAIT_MS = "memory-reclaim-wait-ms";
+    private static final String SHARED_ARBITRATOR_MEMORY_POOL_RESERVED_CAPACITY = "shared-arbitrator.memory-pool-reserved-capacity";
+    private static final String SHARED_ARBITRATOR_MAX_MEMORY_ARBITRATION_TIME = "shared-arbitrator.max-memory-arbitration-time";
     // Spilling related configs.
     private static final String SPILLER_SPILL_PATH = "experimental.spiller-spill-path";
     private static final String TASK_MAX_DRIVERS_PER_TASK = "task.max-drivers-per-task";
@@ -111,6 +107,13 @@ public class NativeExecutionSystemConfig
     private static final String HTTP_SERVER_ACCESS_LOGS = "http-server.enable-access-log";
     // Terminates the native process and generates a core file on an allocation failure
     private static final String CORE_ON_ALLOCATION_FAILURE_ENABLED = "core-on-allocation-failure-enabled";
+    // Spill related properties
+    private static final String SPILL_ENABLED = "spill-enabled";
+    private static final String AGGREGATION_SPILL_ENABLED = "aggregation-spill-enabled";
+    private static final String JOIN_SPILL_ENABLED = "join-spill-enabled";
+    private static final String ORDER_BY_SPILL_ENABLED = "order-by-spill-enabled";
+    private static final String MAX_SPILL_BYTES = "max-spill-bytes";
+
     private boolean enableSerializedPageChecksum = true;
     private boolean enableVeloxExpressionLogging;
     private boolean enableVeloxTaskLogging = true;
@@ -133,24 +136,38 @@ public class NativeExecutionSystemConfig
     // spilling and cache prefetch.
     private DataSize queryMemoryGb = new DataSize(8, DataSize.Unit.GIGABYTE);
 
-    private DataSize queryReservedMemoryGb = new DataSize(0, DataSize.Unit.GIGABYTE);
     private boolean useMmapAllocator = true;
     private String memoryArbitratorKind = "SHARED";
     private int memoryArbitratorCapacityGb = 8;
-    private int memoryArbitratorReservedCapacityGb;
-    private long memoryPoolInitCapacity = 8L << 30;
-    private long memoryPoolReservedCapacity;
-    private long memoryPoolTransferCapacity = 2L << 30;
-    private long memoryReclaimWaitMs = 300_000;
+    private DataSize sharedArbitratorReservedCapacity = new DataSize(0, DataSize.Unit.GIGABYTE);
+    private DataSize sharedArbitratorMemoryPoolInitialCapacity = new DataSize(4, DataSize.Unit.GIGABYTE);
+    private DataSize sharedArbitratorMemoryPoolReservedCapacity = new DataSize(32, DataSize.Unit.MEGABYTE);
+    private Duration sharedArbitratorMaxMemoryArbitrationTime = new Duration(5, TimeUnit.MINUTES);
     private String spillerSpillPath = "";
     private int concurrentLifespansPerTask = 5;
     private int maxDriversPerTask = 15;
     private boolean enableOldTaskCleanUp; // false;
     private String prestoVersion = "dummy.presto.version";
     private String shuffleName = "local";
-    private boolean registerTestFunctions;
     private boolean enableHttpServerAccessLog = true;
     private boolean coreOnAllocationFailureEnabled;
+    private boolean spillEnabled = true;
+    private boolean aggregationSpillEnabled = true;
+    private boolean joinSpillEnabled = true;
+    private boolean orderBySpillEnabled = true;
+    private Long maxSpillBytes = 600L << 30;
+
+    // TODO: Deprecate following configs
+    private static final String REGISTER_TEST_FUNCTIONS = "register-test-functions";
+    private static final String MEMORY_POOL_INIT_CAPACITY = "memory-pool-init-capacity";
+    private static final String MEMORY_POOL_RESERVED_CAPACITY = "memory-pool-reserved-capacity";
+    private static final String MEMORY_POOL_TRANSFER_CAPACITY = "memory-pool-transfer-capacity";
+    private static final String MEMORY_RECLAIM_WAIT_MS = "memory-reclaim-wait-ms";
+    private boolean registerTestFunctions;
+    private long memoryPoolInitCapacity;
+    private long memoryPoolReservedCapacity;
+    private long memoryPoolTransferCapacity;
+    private long memoryReclaimWaitMs;
 
     public Map<String, String> getAllProperties()
     {
@@ -162,7 +179,6 @@ public class NativeExecutionSystemConfig
                 .put(HTTP_SERVER_HTTP_PORT, String.valueOf(getHttpServerPort()))
                 .put(HTTP_SERVER_REUSE_PORT, String.valueOf(isHttpServerReusePort()))
                 .put(HTTP_SERVER_BIND_TO_NODE_INTERNAL_ADDRESS_ONLY_ENABLED, String.valueOf(isHttpServerBindToNodeInternalAddressOnlyEnabled()))
-                .put(REGISTER_TEST_FUNCTIONS, String.valueOf(isRegisterTestFunctions()))
                 .put(HTTP_SERVER_HTTPS_PORT, String.valueOf(getHttpsServerPort()))
                 .put(HTTP_SERVER_HTTPS_ENABLED, String.valueOf(isEnableHttpsCommunication()))
                 .put(HTTPS_CIPHERS, String.valueOf(getHttpsCiphers()))
@@ -180,17 +196,26 @@ public class NativeExecutionSystemConfig
                 .put(USE_MMAP_ALLOCATOR, String.valueOf(getUseMmapAllocator()))
                 .put(MEMORY_ARBITRATOR_KIND, String.valueOf(getMemoryArbitratorKind()))
                 .put(MEMORY_ARBITRATOR_CAPACITY_GB, String.valueOf(getMemoryArbitratorCapacityGb()))
-                .put(MEMORY_ARBITRATOR_RESERVED_CAPACITY_GB, String.valueOf(getMemoryArbitratorReservedCapacityGb()))
-                .put(MEMORY_POOL_INIT_CAPACITY, String.valueOf(getMemoryPoolInitCapacity()))
-                .put(MEMORY_POOL_RESERVED_CAPACITY, String.valueOf(getMemoryPoolReservedCapacity()))
-                .put(MEMORY_POOL_TRANSFER_CAPACITY, String.valueOf(getMemoryPoolTransferCapacity()))
-                .put(MEMORY_RECLAIM_WAIT_MS, String.valueOf(getMemoryReclaimWaitMs()))
+                .put(SHARED_ARBITRATOR_RESERVED_CAPACITY, String.valueOf(getSharedArbitratorReservedCapacity()))
+                .put(SHARED_ARBITRATOR_MEMORY_POOL_INITIAL_CAPACITY, String.valueOf(getSharedArbitratorMemoryPoolInitialCapacity()))
+                .put(SHARED_ARBITRATOR_MEMORY_POOL_RESERVED_CAPACITY, String.valueOf(getSharedArbitratorMemoryPoolReservedCapacity()))
+                .put(SHARED_ARBITRATOR_MAX_MEMORY_ARBITRATION_TIME, String.valueOf(getSharedArbitratorMaxMemoryArbitrationTime()))
                 .put(SPILLER_SPILL_PATH, String.valueOf(getSpillerSpillPath()))
                 .put(TASK_MAX_DRIVERS_PER_TASK, String.valueOf(getMaxDriversPerTask()))
                 .put(ENABLE_OLD_TASK_CLEANUP, String.valueOf(getOldTaskCleanupMs()))
                 .put(SHUFFLE_NAME, getShuffleName())
                 .put(HTTP_SERVER_ACCESS_LOGS, String.valueOf(isEnableHttpServerAccessLog()))
                 .put(CORE_ON_ALLOCATION_FAILURE_ENABLED, String.valueOf(isCoreOnAllocationFailureEnabled()))
+                .put(SPILL_ENABLED, String.valueOf(getSpillEnabled()))
+                .put(AGGREGATION_SPILL_ENABLED, String.valueOf(getAggregationSpillEnabled()))
+                .put(JOIN_SPILL_ENABLED, String.valueOf(getJoinSpillEnabled()))
+                .put(ORDER_BY_SPILL_ENABLED, String.valueOf(getOrderBySpillEnabled()))
+                .put(MAX_SPILL_BYTES, String.valueOf(getMaxSpillBytes()))
+                .put(REGISTER_TEST_FUNCTIONS, String.valueOf(registerTestFunctions))
+                .put(MEMORY_POOL_INIT_CAPACITY, String.valueOf(memoryPoolInitCapacity))
+                .put(MEMORY_POOL_RESERVED_CAPACITY, String.valueOf(memoryPoolReservedCapacity))
+                .put(MEMORY_POOL_TRANSFER_CAPACITY, String.valueOf(memoryPoolTransferCapacity))
+                .put(MEMORY_RECLAIM_WAIT_MS, String.valueOf(memoryReclaimWaitMs))
                 .build();
     }
 
@@ -276,18 +301,6 @@ public class NativeExecutionSystemConfig
     {
         this.httpServerBindToNodeInternalAddressOnlyEnabled = httpServerBindToNodeInternalAddressOnlyEnabled;
         return this;
-    }
-
-    @Config(REGISTER_TEST_FUNCTIONS)
-    public NativeExecutionSystemConfig setRegisterTestFunctions(boolean registerTestFunctions)
-    {
-        this.registerTestFunctions = registerTestFunctions;
-        return this;
-    }
-
-    public boolean isRegisterTestFunctions()
-    {
-        return registerTestFunctions;
     }
 
     @Config(HTTP_SERVER_NUM_IO_THREADS_HW_MULTIPLIER)
@@ -482,64 +495,52 @@ public class NativeExecutionSystemConfig
         return memoryArbitratorCapacityGb;
     }
 
-    @Config(MEMORY_ARBITRATOR_RESERVED_CAPACITY_GB)
-    public NativeExecutionSystemConfig setMemoryArbitratorReservedCapacityGb(int memoryArbitratorReservedCapacityGb)
+    @Config(SHARED_ARBITRATOR_RESERVED_CAPACITY)
+    public NativeExecutionSystemConfig setSharedArbitratorReservedCapacity(DataSize sharedArbitratorReservedCapacity)
     {
-        this.memoryArbitratorReservedCapacityGb = memoryArbitratorReservedCapacityGb;
+        this.sharedArbitratorReservedCapacity = sharedArbitratorReservedCapacity;
         return this;
     }
 
-    public int getMemoryArbitratorReservedCapacityGb()
+    public DataSize getSharedArbitratorReservedCapacity()
     {
-        return memoryArbitratorReservedCapacityGb;
+        return sharedArbitratorReservedCapacity;
     }
 
-    @Config(MEMORY_POOL_INIT_CAPACITY)
-    public NativeExecutionSystemConfig setMemoryPoolInitCapacity(long memoryPoolInitCapacity)
+    @Config(SHARED_ARBITRATOR_MEMORY_POOL_INITIAL_CAPACITY)
+    public NativeExecutionSystemConfig setSharedArbitratorMemoryPoolInitialCapacity(DataSize sharedArbitratorMemoryPoolInitialCapacity)
     {
-        this.memoryPoolInitCapacity = memoryPoolInitCapacity;
+        this.sharedArbitratorMemoryPoolInitialCapacity = sharedArbitratorMemoryPoolInitialCapacity;
         return this;
     }
 
-    public long getMemoryPoolInitCapacity()
+    public DataSize getSharedArbitratorMemoryPoolInitialCapacity()
     {
-        return memoryPoolInitCapacity;
+        return sharedArbitratorMemoryPoolInitialCapacity;
     }
 
-    @Config(MEMORY_POOL_RESERVED_CAPACITY)
-    public NativeExecutionSystemConfig setMemoryPoolReservedCapacity(long memoryPoolReservedCapacity)
+    @Config(SHARED_ARBITRATOR_MEMORY_POOL_RESERVED_CAPACITY)
+    public NativeExecutionSystemConfig setSharedArbitratorMemoryPoolReservedCapacity(DataSize sharedArbitratorMemoryPoolReservedCapacity)
     {
-        this.memoryPoolReservedCapacity = memoryPoolReservedCapacity;
+        this.sharedArbitratorMemoryPoolReservedCapacity = sharedArbitratorMemoryPoolReservedCapacity;
         return this;
     }
 
-    public long getMemoryPoolReservedCapacity()
+    public DataSize getSharedArbitratorMemoryPoolReservedCapacity()
     {
-        return memoryPoolReservedCapacity;
+        return sharedArbitratorMemoryPoolReservedCapacity;
     }
 
-    @Config(MEMORY_POOL_TRANSFER_CAPACITY)
-    public NativeExecutionSystemConfig setMemoryPoolTransferCapacity(long memoryPoolTransferCapacity)
+    @Config(SHARED_ARBITRATOR_MAX_MEMORY_ARBITRATION_TIME)
+    public NativeExecutionSystemConfig setSharedArbitratorMaxMemoryArbitrationTime(Duration sharedArbitratorMaxMemoryArbitrationTime)
     {
-        this.memoryPoolTransferCapacity = memoryPoolTransferCapacity;
+        this.sharedArbitratorMaxMemoryArbitrationTime = sharedArbitratorMaxMemoryArbitrationTime;
         return this;
     }
 
-    public long getMemoryPoolTransferCapacity()
+    public Duration getSharedArbitratorMaxMemoryArbitrationTime()
     {
-        return memoryPoolTransferCapacity;
-    }
-
-    @Config(MEMORY_RECLAIM_WAIT_MS)
-    public NativeExecutionSystemConfig setMemoryReclaimWaitMs(long memoryReclaimWaitMs)
-    {
-        this.memoryReclaimWaitMs = memoryReclaimWaitMs;
-        return this;
-    }
-
-    public long getMemoryReclaimWaitMs()
-    {
-        return memoryReclaimWaitMs;
+        return sharedArbitratorMaxMemoryArbitrationTime;
     }
 
     @Config(SPILLER_SPILL_PATH)
@@ -624,5 +625,128 @@ public class NativeExecutionSystemConfig
     {
         this.coreOnAllocationFailureEnabled = coreOnAllocationFailureEnabled;
         return this;
+    }
+
+    public boolean getSpillEnabled()
+    {
+        return spillEnabled;
+    }
+
+    @Config(SPILL_ENABLED)
+    public NativeExecutionSystemConfig setSpillEnabled(boolean spillEnabled)
+    {
+        this.spillEnabled = spillEnabled;
+        return this;
+    }
+
+    public boolean getAggregationSpillEnabled()
+    {
+        return aggregationSpillEnabled;
+    }
+
+    @Config(AGGREGATION_SPILL_ENABLED)
+    public NativeExecutionSystemConfig setAggregationSpillEnabled(boolean aggregationSpillEnabled)
+    {
+        this.aggregationSpillEnabled = aggregationSpillEnabled;
+        return this;
+    }
+
+    public boolean getJoinSpillEnabled()
+    {
+        return joinSpillEnabled;
+    }
+
+    @Config(JOIN_SPILL_ENABLED)
+    public NativeExecutionSystemConfig setJoinSpillEnabled(boolean joinSpillEnabled)
+    {
+        this.joinSpillEnabled = joinSpillEnabled;
+        return this;
+    }
+
+    public boolean getOrderBySpillEnabled()
+    {
+        return orderBySpillEnabled;
+    }
+
+    @Config(ORDER_BY_SPILL_ENABLED)
+    public NativeExecutionSystemConfig setOrderBySpillEnabled(boolean orderBySpillEnabled)
+    {
+        this.orderBySpillEnabled = orderBySpillEnabled;
+        return this;
+    }
+
+    public Long getMaxSpillBytes()
+    {
+        return maxSpillBytes;
+    }
+
+    @Config(MAX_SPILL_BYTES)
+    public NativeExecutionSystemConfig setMaxSpillBytes(Long maxSpillBytes)
+    {
+        this.maxSpillBytes = maxSpillBytes;
+        return this;
+    }
+
+    // TODO: All following configs are deprecated and will be removed after references from all
+    //  other systems are cleared.
+
+    @Config(REGISTER_TEST_FUNCTIONS)
+    public NativeExecutionSystemConfig setRegisterTestFunctions(boolean registerTestFunctions)
+    {
+        this.registerTestFunctions = registerTestFunctions;
+        return this;
+    }
+
+    public boolean isRegisterTestFunctions()
+    {
+        return registerTestFunctions;
+    }
+
+    @Config(MEMORY_POOL_INIT_CAPACITY)
+    public NativeExecutionSystemConfig setMemoryPoolInitCapacity(long memoryPoolInitCapacity)
+    {
+        this.memoryPoolInitCapacity = memoryPoolInitCapacity;
+        return this;
+    }
+
+    public long getMemoryPoolInitCapacity()
+    {
+        return memoryPoolInitCapacity;
+    }
+
+    @Config(MEMORY_POOL_RESERVED_CAPACITY)
+    public NativeExecutionSystemConfig setMemoryPoolReservedCapacity(long memoryPoolReservedCapacity)
+    {
+        this.memoryPoolReservedCapacity = memoryPoolReservedCapacity;
+        return this;
+    }
+
+    public long getMemoryPoolReservedCapacity()
+    {
+        return memoryPoolReservedCapacity;
+    }
+
+    @Config(MEMORY_POOL_TRANSFER_CAPACITY)
+    public NativeExecutionSystemConfig setMemoryPoolTransferCapacity(long memoryPoolTransferCapacity)
+    {
+        this.memoryPoolTransferCapacity = memoryPoolTransferCapacity;
+        return this;
+    }
+
+    public long getMemoryPoolTransferCapacity()
+    {
+        return memoryPoolTransferCapacity;
+    }
+
+    @Config(MEMORY_RECLAIM_WAIT_MS)
+    public NativeExecutionSystemConfig setMemoryReclaimWaitMs(long memoryReclaimWaitMs)
+    {
+        this.memoryReclaimWaitMs = memoryReclaimWaitMs;
+        return this;
+    }
+
+    public long getMemoryReclaimWaitMs()
+    {
+        return memoryReclaimWaitMs;
     }
 }

@@ -13,6 +13,7 @@
  */
 package com.facebook.presto.execution;
 
+import com.facebook.airlift.units.DataSize;
 import com.facebook.drift.codec.ThriftCodec;
 import com.facebook.drift.codec.ThriftCodecManager;
 import com.facebook.drift.codec.internal.compiler.CompilerThriftCodecFactory;
@@ -37,7 +38,6 @@ import com.facebook.presto.spi.resourceGroups.ResourceGroupState;
 import com.facebook.presto.spi.resourceGroups.SchedulingPolicy;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableSet;
-import io.airlift.units.DataSize;
 import org.joda.time.DateTime;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
@@ -343,6 +343,12 @@ public class TestThriftResourceGroupInfo
                 FAKE_PROGRESS_PERCENTAGE_1,
                 FAKE_QUEUED_DRIVERS,
                 FAKE_RUNNING_DRIVERS,
+                FAKE_COMPLETED_DRIVERS,
+                FAKE_QUEUED_DRIVERS,
+                FAKE_RUNNING_DRIVERS,
+                FAKE_COMPLETED_DRIVERS,
+                FAKE_QUEUED_DRIVERS,
+                FAKE_RUNNING_DRIVERS,
                 FAKE_COMPLETED_DRIVERS));
         queryProgressStats.add(new QueryProgressStats(
                 FAKE_ELAPSED_TIME_MILLIS,
@@ -361,6 +367,12 @@ public class TestThriftResourceGroupInfo
                 FAKE_BLOCKED,
                 Optional.empty(),
                 FAKE_PROGRESS_PERCENTAGE_2,
+                FAKE_QUEUED_DRIVERS,
+                FAKE_RUNNING_DRIVERS,
+                FAKE_COMPLETED_DRIVERS,
+                FAKE_QUEUED_DRIVERS,
+                FAKE_RUNNING_DRIVERS,
+                FAKE_COMPLETED_DRIVERS,
                 FAKE_QUEUED_DRIVERS,
                 FAKE_RUNNING_DRIVERS,
                 FAKE_COMPLETED_DRIVERS));

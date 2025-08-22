@@ -34,7 +34,7 @@ function install_proxygen {
 }
 
 function install_gperf {
-  wget_and_untar https://ftpmirror.gnu.org/gperf/gperf-${GPERF_VERSION}.tar.gz gperf
+  wget_and_untar https://ftp.gnu.org/pub/gnu/gperf/gperf-${GPERF_VERSION}.tar.gz gperf
   cd ${DEPENDENCY_DIR}/gperf
   ./configure --prefix=${INSTALL_PREFIX}
   make install
@@ -44,6 +44,8 @@ function install_presto_deps {
   run_and_time install_gperf
   run_and_time install_proxygen
 }
+
+(return 2> /dev/null) && return # If script was sourced, don't run commands.
 
 if [[ $# -ne 0 ]]; then
   for cmd in "$@"; do

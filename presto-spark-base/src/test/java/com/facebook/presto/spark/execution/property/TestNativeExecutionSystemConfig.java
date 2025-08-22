@@ -14,7 +14,9 @@
 package com.facebook.presto.spark.execution.property;
 
 import com.facebook.airlift.configuration.testing.ConfigAssertions;
-import io.airlift.units.DataSize;
+import com.facebook.airlift.units.DataSize;
+import com.facebook.airlift.units.DataSize.Unit;
+import com.facebook.airlift.units.Duration;
 import org.testng.annotations.Test;
 
 import java.io.File;
@@ -25,6 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 
 import static com.facebook.airlift.configuration.testing.ConfigAssertions.assertFullMapping;
 import static com.facebook.airlift.configuration.testing.ConfigAssertions.assertRecordedDefaults;
@@ -33,30 +36,6 @@ import static org.testng.Assert.fail;
 
 public class TestNativeExecutionSystemConfig
 {
-    @Test
-    public void testNativeExecutionVeloxConfig()
-    {
-        // Test defaults
-        assertRecordedDefaults(ConfigAssertions.recordDefaults(NativeExecutionVeloxConfig.class)
-                .setCodegenEnabled(false)
-                .setSpillEnabled(true)
-                .setAggregationSpillEnabled(true)
-                .setJoinSpillEnabled(true)
-                .setOrderBySpillEnabled(true)
-                .setMaxSpillBytes(500L << 30));
-
-        // Test explicit property mapping. Also makes sure properties returned by getAllProperties() covers full property list.
-        NativeExecutionVeloxConfig expected = new NativeExecutionVeloxConfig()
-                .setCodegenEnabled(true)
-                .setSpillEnabled(false)
-                .setAggregationSpillEnabled(false)
-                .setJoinSpillEnabled(false)
-                .setOrderBySpillEnabled(false)
-                .setMaxSpillBytes(1L);
-        Map<String, String> properties = expected.getAllProperties();
-        assertFullMapping(properties, expected);
-    }
-
     @Test
     public void testNativeExecutionSystemConfig()
     {
@@ -84,20 +63,28 @@ public class TestNativeExecutionSystemConfig
                 .setUseMmapAllocator(true)
                 .setMemoryArbitratorKind("SHARED")
                 .setMemoryArbitratorCapacityGb(8)
-                .setMemoryArbitratorReservedCapacityGb(0)
-                .setMemoryPoolInitCapacity(8L << 30)
-                .setMemoryPoolReservedCapacity(0)
-                .setMemoryPoolTransferCapacity(2L << 30)
-                .setMemoryReclaimWaitMs(300_000)
+                .setSharedArbitratorReservedCapacity(new DataSize(0, Unit.GIGABYTE))
+                .setSharedArbitratorMemoryPoolInitialCapacity(new DataSize(4, Unit.GIGABYTE))
+                .setSharedArbitratorMemoryPoolReservedCapacity(new DataSize(32, Unit.MEGABYTE))
+                .setSharedArbitratorMaxMemoryArbitrationTime(new Duration(5, TimeUnit.MINUTES))
                 .setSpillerSpillPath("")
                 .setConcurrentLifespansPerTask(5)
                 .setMaxDriversPerTask(15)
                 .setOldTaskCleanupMs(false)
                 .setPrestoVersion("dummy.presto.version")
                 .setShuffleName("local")
-                .setRegisterTestFunctions(false)
                 .setEnableHttpServerAccessLog(true)
-                .setCoreOnAllocationFailureEnabled(false));
+                .setCoreOnAllocationFailureEnabled(false)
+                .setSpillEnabled(true)
+                .setAggregationSpillEnabled(true)
+                .setJoinSpillEnabled(true)
+                .setOrderBySpillEnabled(true)
+                .setMaxSpillBytes(600L << 30)
+                .setRegisterTestFunctions(false)
+                .setMemoryPoolInitCapacity(0)
+                .setMemoryPoolReservedCapacity(0)
+                .setMemoryPoolTransferCapacity(0)
+                .setMemoryReclaimWaitMs(0));
 
         // Test explicit property mapping. Also makes sure properties returned by getAllProperties() covers full property list.
         NativeExecutionSystemConfig expected = new NativeExecutionSystemConfig()
@@ -121,22 +108,30 @@ public class TestNativeExecutionSystemConfig
                 .setPrestoVersion("presto-version")
                 .setShutdownOnsetSec(30)
                 .setSystemMemoryGb(40)
-                .setQueryMemoryGb(new DataSize(20, DataSize.Unit.GIGABYTE))
+                .setQueryMemoryGb(new DataSize(20, Unit.GIGABYTE))
                 .setUseMmapAllocator(false)
                 .setMemoryArbitratorKind("")
                 .setMemoryArbitratorCapacityGb(10)
-                .setMemoryArbitratorReservedCapacityGb(8)
-                .setMemoryPoolInitCapacity(7L << 30)
-                .setMemoryPoolReservedCapacity(6L << 30)
-                .setMemoryPoolTransferCapacity(1L << 30)
-                .setMemoryReclaimWaitMs(123123123)
+                .setSharedArbitratorReservedCapacity(new DataSize(8, Unit.GIGABYTE))
+                .setSharedArbitratorMemoryPoolInitialCapacity(new DataSize(7, Unit.GIGABYTE))
+                .setSharedArbitratorMemoryPoolReservedCapacity(new DataSize(6, Unit.GIGABYTE))
+                .setSharedArbitratorMaxMemoryArbitrationTime(new Duration(123123123, TimeUnit.MILLISECONDS))
                 .setSpillerSpillPath("dummy.spill.path")
                 .setMaxDriversPerTask(30)
                 .setOldTaskCleanupMs(true)
                 .setShuffleName("custom")
-                .setRegisterTestFunctions(true)
                 .setEnableHttpServerAccessLog(false)
-                .setCoreOnAllocationFailureEnabled(true);
+                .setCoreOnAllocationFailureEnabled(true)
+                .setSpillEnabled(false)
+                .setAggregationSpillEnabled(false)
+                .setJoinSpillEnabled(false)
+                .setOrderBySpillEnabled(false)
+                .setMaxSpillBytes(1L)
+                .setRegisterTestFunctions(true)
+                .setMemoryPoolInitCapacity(10)
+                .setMemoryPoolReservedCapacity(10)
+                .setMemoryPoolTransferCapacity(10)
+                .setMemoryReclaimWaitMs(10);
         Map<String, String> properties = expected.getAllProperties();
         assertFullMapping(properties, expected);
     }
@@ -187,7 +182,7 @@ public class TestNativeExecutionSystemConfig
     @Test
     public void testFilePropertiesPopulator()
     {
-        PrestoSparkWorkerProperty workerProperty = new PrestoSparkWorkerProperty(new NativeExecutionConnectorConfig(), new NativeExecutionNodeConfig(), new NativeExecutionSystemConfig(), new NativeExecutionVeloxConfig());
+        PrestoSparkWorkerProperty workerProperty = new PrestoSparkWorkerProperty(new NativeExecutionConnectorConfig(), new NativeExecutionNodeConfig(), new NativeExecutionSystemConfig());
         testPropertiesPopulate(workerProperty);
     }
 

@@ -20,6 +20,8 @@ import com.facebook.presto.common.type.DecimalType;
 import com.facebook.presto.common.type.Type;
 import com.facebook.presto.common.type.UuidType;
 import com.facebook.presto.common.type.VarcharType;
+import com.facebook.presto.plugin.jdbc.mapping.ReadMapping;
+import com.facebook.presto.plugin.jdbc.mapping.WriteMapping;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.ConnectorSession;
@@ -37,9 +39,8 @@ import com.google.common.cache.CacheBuilder;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-
-import javax.annotation.Nullable;
-import javax.annotation.PreDestroy;
+import jakarta.annotation.Nullable;
+import jakarta.annotation.PreDestroy;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -71,7 +72,8 @@ import static com.facebook.presto.common.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.common.type.Varchars.isVarcharType;
 import static com.facebook.presto.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
 import static com.facebook.presto.plugin.jdbc.JdbcWarningCode.USE_OF_DEPRECATED_CONFIGURATION_PROPERTY;
-import static com.facebook.presto.plugin.jdbc.StandardReadMappings.jdbcTypeToPrestoType;
+import static com.facebook.presto.plugin.jdbc.mapping.StandardColumnMappings.jdbcTypeToReadMapping;
+import static com.facebook.presto.plugin.jdbc.mapping.StandardColumnMappings.prestoTypeToWriteMapping;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.base.MoreObjects.firstNonNull;
@@ -246,13 +248,13 @@ public class BaseJdbcClient
                             resultSet.getString("TYPE_NAME"),
                             resultSet.getInt("COLUMN_SIZE"),
                             resultSet.getInt("DECIMAL_DIGITS"));
-                    Optional<ReadMapping> columnMapping = toPrestoType(session, typeHandle);
+                    Optional<ReadMapping> readMapping = toPrestoType(session, typeHandle);
                     // skip unsupported column types
-                    if (columnMapping.isPresent()) {
+                    if (readMapping.isPresent()) {
                         String columnName = resultSet.getString("COLUMN_NAME");
                         boolean nullable = columnNullable == resultSet.getInt("NULLABLE");
                         Optional<String> comment = Optional.ofNullable(emptyToNull(resultSet.getString("REMARKS")));
-                        columns.add(new JdbcColumnHandle(connectorId, columnName, typeHandle, columnMapping.get().getType(), nullable, comment));
+                        columns.add(new JdbcColumnHandle(connectorId, columnName, typeHandle, readMapping.get().getType(), nullable, comment));
                     }
                 }
                 if (columns.isEmpty()) {
@@ -274,7 +276,7 @@ public class BaseJdbcClient
     @Override
     public Optional<ReadMapping> toPrestoType(ConnectorSession session, JdbcTypeHandle typeHandle)
     {
-        return jdbcTypeToPrestoType(typeHandle);
+        return jdbcTypeToReadMapping(typeHandle);
     }
 
     @Override
@@ -751,7 +753,6 @@ public class BaseJdbcClient
             statement.execute(query);
         }
     }
-
     protected String toSqlType(Type type)
     {
         if (isVarcharType(type)) {
@@ -774,6 +775,15 @@ public class BaseJdbcClient
         String sqlType = SQL_TYPES.get(type);
         if (sqlType != null) {
             return sqlType;
+        }
+        throw new PrestoException(NOT_SUPPORTED, "Unsupported column type: " + type.getDisplayName());
+    }
+
+    public WriteMapping toWriteMapping(Type type)
+    {
+        Optional<WriteMapping> writeMapping = prestoTypeToWriteMapping(type);
+        if (writeMapping.isPresent()) {
+            return writeMapping.get();
         }
         throw new PrestoException(NOT_SUPPORTED, "Unsupported column type: " + type.getDisplayName());
     }

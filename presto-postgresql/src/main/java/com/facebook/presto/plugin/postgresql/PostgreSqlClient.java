@@ -21,10 +21,13 @@ import com.facebook.presto.common.type.TypeSignature;
 import com.facebook.presto.plugin.jdbc.BaseJdbcClient;
 import com.facebook.presto.plugin.jdbc.BaseJdbcConfig;
 import com.facebook.presto.plugin.jdbc.DriverConnectionFactory;
+import com.facebook.presto.plugin.jdbc.JdbcColumnHandle;
 import com.facebook.presto.plugin.jdbc.JdbcConnectorId;
 import com.facebook.presto.plugin.jdbc.JdbcIdentity;
+import com.facebook.presto.plugin.jdbc.JdbcSplit;
 import com.facebook.presto.plugin.jdbc.JdbcTypeHandle;
-import com.facebook.presto.plugin.jdbc.ReadMapping;
+import com.facebook.presto.plugin.jdbc.QueryBuilder;
+import com.facebook.presto.plugin.jdbc.mapping.ReadMapping;
 import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.ConnectorTableMetadata;
 import com.facebook.presto.spi.PrestoException;
@@ -36,9 +39,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slice;
 import io.airlift.slice.SliceOutput;
+import jakarta.inject.Inject;
 import org.postgresql.Driver;
-
-import javax.inject.Inject;
 
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -48,20 +50,30 @@ import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
+import static com.facebook.presto.common.type.StandardTypes.GEOMETRY;
+import static com.facebook.presto.common.type.StandardTypes.SPHERICAL_GEOGRAPHY;
 import static com.facebook.presto.common.type.VarbinaryType.VARBINARY;
 import static com.facebook.presto.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
+import static com.facebook.presto.plugin.jdbc.QueryBuilder.quote;
+import static com.facebook.presto.plugin.jdbc.mapping.ReadMapping.createSliceReadMapping;
+import static com.facebook.presto.plugin.jdbc.mapping.StandardColumnMappings.geometryReadMapping;
 import static com.facebook.presto.spi.StandardErrorCode.ALREADY_EXISTS;
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static com.fasterxml.jackson.core.JsonFactory.Feature.CANONICALIZE_FIELD_NAMES;
 import static com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS;
+import static com.google.common.collect.ImmutableMap.toImmutableMap;
 import static io.airlift.slice.Slices.utf8Slice;
 import static io.airlift.slice.Slices.wrappedLongArray;
 import static java.lang.Long.reverseBytes;
 import static java.lang.String.format;
 import static java.nio.charset.StandardCharsets.UTF_8;
+import static java.util.Locale.ENGLISH;
+import static java.util.function.Function.identity;
 
 public class PostgreSqlClient
         extends BaseJdbcClient
@@ -115,14 +127,42 @@ public class PostgreSqlClient
     }
 
     @Override
+    public PreparedStatement buildSql(ConnectorSession session, Connection connection, JdbcSplit split, List<JdbcColumnHandle> columnHandles) throws SQLException
+    {
+        Map<String, String> columnExpressions = columnHandles.stream()
+                .filter(handle -> handle.getJdbcTypeHandle().getJdbcTypeName().equalsIgnoreCase(GEOMETRY))
+                .map(JdbcColumnHandle::getColumnName)
+                .collect(toImmutableMap(
+                        identity(),
+                        columnName -> "ST_AsBinary(" + quote(identifierQuote, columnName) + ")"));
+
+        return new QueryBuilder(identifierQuote).buildSql(
+                this,
+                session,
+                connection,
+                split.getCatalogName(),
+                split.getSchemaName(),
+                split.getTableName(),
+                columnHandles,
+                columnExpressions,
+                split.getTupleDomain(),
+                split.getAdditionalPredicate());
+    }
+
+    @Override
     public Optional<ReadMapping> toPrestoType(ConnectorSession session, JdbcTypeHandle typeHandle)
     {
+        String typeName = typeHandle.getJdbcTypeName();
+
         if (typeHandle.getJdbcTypeName().equals("jsonb") || typeHandle.getJdbcTypeName().equals("json")) {
-            return Optional.of(jsonColumnMapping());
+            return Optional.of(jsonReadMapping());
         }
 
         else if (typeHandle.getJdbcTypeName().equals("uuid")) {
-            return Optional.of(uuidColumnMapping());
+            return Optional.of(uuidReadMapping());
+        }
+        else if (typeName.equalsIgnoreCase(GEOMETRY) || typeName.equalsIgnoreCase(SPHERICAL_GEOGRAPHY)) {
+            return Optional.of(geometryReadMapping());
         }
         return super.toPrestoType(session, typeHandle);
     }
@@ -157,9 +197,9 @@ public class PostgreSqlClient
         }
     }
 
-    private ReadMapping jsonColumnMapping()
+    private ReadMapping jsonReadMapping()
     {
-        return ReadMapping.sliceReadMapping(
+        return createSliceReadMapping(
                 jsonType,
                 (resultSet, columnIndex) -> jsonParse(utf8Slice(resultSet.getString(columnIndex))));
     }
@@ -188,9 +228,9 @@ public class PostgreSqlClient
         return factory.createParser(new InputStreamReader(json.getInput(), UTF_8));
     }
 
-    private ReadMapping uuidColumnMapping()
+    private ReadMapping uuidReadMapping()
     {
-        return ReadMapping.sliceReadMapping(
+        return createSliceReadMapping(
                 uuidType,
                 (resultSet, columnIndex) -> uuidSlice((UUID) resultSet.getObject(columnIndex)));
     }
@@ -200,5 +240,11 @@ public class PostgreSqlClient
         return wrappedLongArray(
                 reverseBytes(uuid.getMostSignificantBits()),
                 reverseBytes(uuid.getLeastSignificantBits()));
+    }
+
+    @Override
+    public String normalizeIdentifier(ConnectorSession session, String identifier)
+    {
+        return caseSensitiveNameMatchingEnabled ? identifier : identifier.toLowerCase(ENGLISH);
     }
 }

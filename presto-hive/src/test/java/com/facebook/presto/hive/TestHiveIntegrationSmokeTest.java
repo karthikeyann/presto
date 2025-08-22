@@ -68,9 +68,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -142,6 +140,8 @@ import static com.facebook.presto.sql.planner.optimizations.PlanNodeSearcher.sea
 import static com.facebook.presto.sql.planner.plan.ExchangeNode.Scope.REMOTE_MATERIALIZED;
 import static com.facebook.presto.sql.planner.planPrinter.PlanPrinter.textLogicalPlan;
 import static com.facebook.presto.testing.MaterializedResult.resultBuilder;
+import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.SELECT_COLUMN;
+import static com.facebook.presto.testing.TestingAccessControlManager.privilege;
 import static com.facebook.presto.testing.TestingSession.testSessionBuilder;
 import static com.facebook.presto.testing.assertions.Assert.assertEquals;
 import static com.facebook.presto.tests.QueryAssertions.assertEqualsIgnoreOrder;
@@ -1905,7 +1905,7 @@ public class TestHiveIntegrationSmokeTest
         assertQuery(
                 getSession(),
                 "SHOW COLUMNS FROM \"" + tableName + "$partitions\"",
-                "VALUES ('part1', 'bigint', '', ''), ('part2', 'varchar', '', '')");
+                "VALUES ('part1', 'bigint', '', '', 19L, null, null), ('part2', 'varchar', '', '', null, null, 2147483647L)");
 
         assertQueryFails(
                 getSession(),
@@ -2120,15 +2120,15 @@ public class TestHiveIntegrationSmokeTest
 
         MaterializedResult actual = computeActual("SHOW COLUMNS FROM test_show_columns_partition_key");
         Type unboundedVarchar = canonicalizeType(VARCHAR);
-        MaterializedResult expected = resultBuilder(getSession(), unboundedVarchar, unboundedVarchar, unboundedVarchar, unboundedVarchar)
-                .row("grape", canonicalizeTypeName("bigint"), "", "")
-                .row("orange", canonicalizeTypeName("bigint"), "", "")
-                .row("pear", canonicalizeTypeName("varchar(65535)"), "", "")
-                .row("mango", canonicalizeTypeName("integer"), "", "")
-                .row("lychee", canonicalizeTypeName("smallint"), "", "")
-                .row("kiwi", canonicalizeTypeName("tinyint"), "", "")
-                .row("apple", canonicalizeTypeName("varchar"), "partition key", "")
-                .row("pineapple", canonicalizeTypeName("varchar(65535)"), "partition key", "")
+        MaterializedResult expected = resultBuilder(getSession(), unboundedVarchar, unboundedVarchar, unboundedVarchar, unboundedVarchar, BIGINT, BIGINT, BIGINT)
+                .row("grape", canonicalizeTypeName("bigint"), "", "", 19L, null, null)
+                .row("orange", canonicalizeTypeName("bigint"), "", "", 19L, null, null)
+                .row("pear", canonicalizeTypeName("varchar(65535)"), "", "", null, null, 65535L)
+                .row("mango", canonicalizeTypeName("integer"), "", "", 10L, null, null)
+                .row("lychee", canonicalizeTypeName("smallint"), "", "", 5L, null, null)
+                .row("kiwi", canonicalizeTypeName("tinyint"), "", "", 3L, null, null)
+                .row("apple", canonicalizeTypeName("varchar"), "partition key", "", null, null, 2147483647L)
+                .row("pineapple", canonicalizeTypeName("varchar(65535)"), "partition key", "", null, null, 65535L)
                 .build();
         assertEquals(actual, expected);
     }
@@ -2631,96 +2631,6 @@ public class TestHiveIntegrationSmokeTest
     }
 
     @Test
-    public void testFileRenamingForPartitionedTable()
-    {
-        try {
-            // Create partitioned table
-            assertUpdate(
-                    Session.builder(getSession())
-                            .setCatalogSessionProperty(catalog, FILE_RENAMING_ENABLED, "true")
-                            .setSystemProperty("scale_writers", "false")
-                            .setSystemProperty("writer_min_size", "1MB")
-                            .setSystemProperty("task_writer_count", "1")
-                            .build(),
-                    "CREATE TABLE partitioned_ordering_table (orderkey, custkey, totalprice, orderdate, orderpriority, clerk, shippriority, comment, orderstatus)\n" +
-                            "WITH (partitioned_by = ARRAY['orderstatus'], preferred_ordering_columns = ARRAY['orderkey']) AS\n" +
-                            "SELECT orderkey, custkey, totalprice, orderdate, orderpriority, clerk, shippriority, comment, orderstatus FROM tpch.tiny.orders",
-                    (long) computeActual("SELECT count(*) FROM tpch.tiny.orders").getOnlyValue());
-
-            // Collect all file names
-            Map<String, List<Integer>> partitionFileNamesMap = new HashMap<>();
-            MaterializedResult partitionedResults = computeActual("SELECT DISTINCT \"$path\" FROM partitioned_ordering_table");
-            for (int i = 0; i < partitionedResults.getRowCount(); i++) {
-                MaterializedRow row = partitionedResults.getMaterializedRows().get(i);
-                Path pathName = new Path((String) row.getField(0));
-                String partitionName = pathName.getParent().toString();
-                String fileName = pathName.getName();
-                partitionFileNamesMap.putIfAbsent(partitionName, new ArrayList<>());
-                partitionFileNamesMap.get(partitionName).add(Integer.valueOf(fileName));
-            }
-
-            // Assert that file names are a continuous increasing sequence for all partitions
-            for (String partitionName : partitionFileNamesMap.keySet()) {
-                List<Integer> partitionedTableFileNames = partitionFileNamesMap.get(partitionName);
-                assertTrue(partitionedTableFileNames.size() > 0);
-                assertTrue(isIncreasingSequence(partitionedTableFileNames));
-            }
-        }
-        finally {
-            assertUpdate("DROP TABLE IF EXISTS partitioned_ordering_table");
-        }
-    }
-
-    @Test
-    public void testFileRenamingForUnpartitionedTable()
-    {
-        try {
-            // Create un-partitioned table
-            assertUpdate(
-                    Session.builder(getSession())
-                            .setCatalogSessionProperty(catalog, FILE_RENAMING_ENABLED, "true")
-                            .setSystemProperty("scale_writers", "false")
-                            .setSystemProperty("writer_min_size", "1MB")
-                            .setSystemProperty("task_writer_count", "1")
-                            .build(),
-                    "CREATE TABLE unpartitioned_ordering_table AS SELECT * FROM tpch.tiny.orders",
-                    (long) computeActual("SELECT count(*) FROM tpch.tiny.orders").getOnlyValue());
-
-            // Collect file names of the table
-            List<Integer> fileNames = new ArrayList<>();
-            MaterializedResult results = computeActual("SELECT DISTINCT \"$path\" FROM unpartitioned_ordering_table");
-            for (int i = 0; i < results.getRowCount(); i++) {
-                MaterializedRow row = results.getMaterializedRows().get(i);
-                String pathName = (String) row.getField(0);
-                String fileName = new Path(pathName).getName();
-                fileNames.add(Integer.valueOf(fileName));
-            }
-
-            assertTrue(fileNames.size() > 0);
-
-            // Assert that file names are continuous increasing sequence
-            assertTrue(isIncreasingSequence(fileNames));
-        }
-        finally {
-            assertUpdate("DROP TABLE IF EXISTS unpartitioned_ordering_table");
-        }
-    }
-
-    boolean isIncreasingSequence(List<Integer> fileNames)
-    {
-        Collections.sort(fileNames);
-
-        int i = 0;
-        for (int fileName : fileNames) {
-            if (i != fileName) {
-                return false;
-            }
-            i++;
-        }
-        return true;
-    }
-
-    @Test
     public void testShowCreateTable()
     {
         String createTableFormat = "CREATE TABLE %s.%s.%s (\n" +
@@ -2781,6 +2691,7 @@ public class TestHiveIntegrationSmokeTest
         actualResult = computeActual("SHOW CREATE TABLE \"test_show_create_table'2\"");
         assertEquals(getOnlyElement(actualResult.getOnlyColumnAsSet()), createTableSql);
     }
+
     @Test
     public void testShowCreateSchema()
     {
@@ -3218,7 +3129,7 @@ public class TestHiveIntegrationSmokeTest
         assertUpdate("ALTER TABLE test_add_column ADD COLUMN b bigint COMMENT 'test comment BBB'");
         assertQueryFails("ALTER TABLE test_add_column ADD COLUMN a varchar", ".* Column 'a' already exists");
         assertQueryFails("ALTER TABLE test_add_column ADD COLUMN c bad_type", ".* Unknown type 'bad_type' for column 'c'");
-        assertQuery("SHOW COLUMNS FROM test_add_column", "VALUES ('a', 'bigint', '', 'test comment AAA'), ('b', 'bigint', '', 'test comment BBB')");
+        assertQuery("SHOW COLUMNS FROM test_add_column", "VALUES ('a', 'bigint', '', 'test comment AAA', 19, NULL, NULL), ('b', 'bigint', '', 'test comment BBB', 19, NULL, NULL)");
         assertUpdate("DROP TABLE test_add_column");
     }
 
@@ -4440,6 +4351,48 @@ public class TestHiveIntegrationSmokeTest
         assertQueryFails(
                 "CREATE TABLE invalid_partition_value (a, b) WITH (partitioned_by = ARRAY['b']) AS SELECT 4, chr(9731)",
                 "\\QHive partition keys can only contain printable ASCII characters (0x20 - 0x7E). Invalid value: E2 98 83\\E");
+    }
+
+    @Test
+    public void testShowColumnMetadata()
+    {
+        String tableName = "test_show_column_table";
+
+        @Language("SQL") String createTable = "CREATE TABLE " + tableName + " (a bigint, b varchar, c double)";
+
+        Session testSession = testSessionBuilder()
+                .setIdentity(new Identity("test_access_owner", Optional.empty()))
+                .setCatalog(getSession().getCatalog().get())
+                .setSchema(getSession().getSchema().get())
+                .build();
+
+        assertUpdate(createTable);
+
+        // verify showing columns over a table requires SELECT privileges for the table
+        assertAccessAllowed("SHOW COLUMNS FROM " + tableName);
+        assertAccessDenied(testSession,
+                "SHOW COLUMNS FROM " + tableName,
+                "Cannot show columns of table .*." + tableName + ".*",
+                privilege(tableName, SELECT_COLUMN));
+
+        @Language("SQL") String getColumnsSql = "" +
+                "SELECT lower(column_name) " +
+                "FROM information_schema.columns " +
+                "WHERE table_name = '" + tableName + "'";
+        assertEquals(computeActual(getColumnsSql).getOnlyColumnAsSet(), ImmutableSet.of("a", "b", "c"));
+
+        // verify with no SELECT privileges on table, querying information_schema will return empty columns
+        executeExclusively(() -> {
+            try {
+                getQueryRunner().getAccessControl().deny(privilege(tableName, SELECT_COLUMN));
+                assertQueryReturnsEmptyResult(testSession, getColumnsSql);
+            }
+            finally {
+                getQueryRunner().getAccessControl().reset();
+            }
+        });
+
+        assertUpdate("DROP TABLE " + tableName);
     }
 
     @Test

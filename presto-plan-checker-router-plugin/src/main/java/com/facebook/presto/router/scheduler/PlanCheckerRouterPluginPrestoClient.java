@@ -15,17 +15,16 @@ package com.facebook.presto.router.scheduler;
 
 import com.facebook.airlift.log.Logger;
 import com.facebook.airlift.stats.CounterStat;
+import com.facebook.airlift.units.Duration;
 import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.QueryError;
 import com.facebook.presto.client.StatementClient;
 import com.facebook.presto.sql.parser.SqlParserOptions;
 import com.google.common.collect.ImmutableMap;
-import io.airlift.units.Duration;
+import jakarta.inject.Inject;
 import okhttp3.OkHttpClient;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
-
-import javax.inject.Inject;
 
 import java.net.URI;
 import java.security.Principal;
@@ -45,7 +44,8 @@ import static java.util.Objects.requireNonNull;
 public class PlanCheckerRouterPluginPrestoClient
 {
     private static final Logger log = Logger.get(PlanCheckerRouterPluginPrestoClient.class);
-    private static final String ANALYZE_CALL = "EXPLAIN (TYPE DISTRIBUTED) ";
+    private static final String ANALYZE_CALL = "EXPLAIN (TYPE VALIDATE) ";
+    private static final CounterStat fallBackToJavaClusterRedirectRequests = new CounterStat();
     private static final CounterStat javaClusterRedirectRequests = new CounterStat();
     private static final CounterStat nativeClusterRedirectRequests = new CounterStat();
     private final OkHttpClient httpClient = new OkHttpClient();
@@ -107,6 +107,7 @@ public class PlanCheckerRouterPluginPrestoClient
                 // If any exception is thrown, log the message and re-route to a Java clusters router.
                 isNativeCompatible = false;
                 log.info(e.getMessage());
+                fallBackToJavaClusterRedirectRequests.update(1L);
             }
             else {
                 // hard failure
@@ -136,6 +137,13 @@ public class PlanCheckerRouterPluginPrestoClient
     public CounterStat getNativeClusterRedirectRequests()
     {
         return nativeClusterRedirectRequests;
+    }
+
+    @Managed
+    @Nested
+    public CounterStat getFallBackToJavaClusterRedirectRequests()
+    {
+        return fallBackToJavaClusterRedirectRequests;
     }
 
     private ClientSession parseHeadersToClientSession(Map<String, List<String>> headers, Principal principal)

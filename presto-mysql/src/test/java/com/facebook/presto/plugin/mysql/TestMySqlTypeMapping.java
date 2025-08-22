@@ -28,7 +28,6 @@ import com.facebook.presto.tests.sql.JdbcSqlExecutor;
 import com.facebook.presto.tests.sql.PrestoSqlExecutor;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import io.airlift.units.Duration;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.Test;
 
@@ -56,7 +55,6 @@ import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Strings.repeat;
 import static com.google.common.base.Verify.verify;
 import static java.lang.String.format;
-import static java.util.concurrent.TimeUnit.SECONDS;
 
 @Test
 public class TestMySqlTypeMapping
@@ -64,7 +62,6 @@ public class TestMySqlTypeMapping
 {
     private static final String CHARACTER_SET_UTF8 = "CHARACTER SET utf8";
     private static final MySqlOptions MY_SQL_OPTIONS = MySqlOptions.builder()
-            .setCommandTimeout(new Duration(90, SECONDS))
             .build();
 
     private final TestingMySqlServer mysqlServer;
@@ -261,13 +258,13 @@ public class TestMySqlTypeMapping
     @Test
     public void testDatetime()
     {
-        // TODO MySQL datetime is not correctly read (see comment in StandardReadMappings.timestampReadMapping), but testing this is hard because of #7122
+        // TODO MySQL datetime is not correctly read (see comment in StandardColumnMappings.timestampReadMapping), but testing this is hard because of #7122
     }
 
     @Test
     public void testTimestamp()
     {
-        // TODO MySQL timestamp is not correctly read (see comment in StandardReadMappings.timestampReadMapping), but testing this is hard because of #7122
+        // TODO MySQL timestamp is not correctly read (see comment in StandardColumnMappings.timestampReadMapping), but testing this is hard because of #7122
     }
 
     private void testUnsupportedDataType(String databaseDataType)

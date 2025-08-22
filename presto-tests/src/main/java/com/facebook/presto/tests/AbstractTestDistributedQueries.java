@@ -14,6 +14,7 @@
 package com.facebook.presto.tests;
 
 import com.facebook.airlift.testing.Assertions;
+import com.facebook.airlift.units.Duration;
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.dispatcher.DispatchManager;
@@ -32,7 +33,6 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.util.concurrent.UncheckedTimeoutException;
-import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 import org.testng.annotations.Test;
 
@@ -44,6 +44,7 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+import static com.facebook.airlift.units.Duration.nanosSince;
 import static com.facebook.presto.SystemSessionProperties.JOIN_DISTRIBUTION_TYPE;
 import static com.facebook.presto.SystemSessionProperties.JOIN_REORDERING_STRATEGY;
 import static com.facebook.presto.SystemSessionProperties.OPTIMIZE_PAYLOAD_JOINS;
@@ -52,6 +53,7 @@ import static com.facebook.presto.SystemSessionProperties.QUERY_MAX_MEMORY;
 import static com.facebook.presto.SystemSessionProperties.REMOVE_REDUNDANT_CAST_TO_VARCHAR_IN_JOIN;
 import static com.facebook.presto.SystemSessionProperties.SHARDED_JOINS_STRATEGY;
 import static com.facebook.presto.SystemSessionProperties.VERBOSE_OPTIMIZER_INFO_ENABLED;
+import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.common.type.UuidType.UUID;
 import static com.facebook.presto.common.type.VarcharType.VARCHAR;
 import static com.facebook.presto.connector.informationSchema.InformationSchemaMetadata.INFORMATION_SCHEMA;
@@ -62,6 +64,7 @@ import static com.facebook.presto.testing.TestingAccessControlManager.TestingPri
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.CREATE_TABLE;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.CREATE_VIEW;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.CREATE_VIEW_WITH_SELECT_COLUMNS;
+import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.DELETE_TABLE;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.DROP_COLUMN;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.DROP_TABLE;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.RENAME_COLUMN;
@@ -69,6 +72,7 @@ import static com.facebook.presto.testing.TestingAccessControlManager.TestingPri
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.SELECT_COLUMN;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.SET_SESSION;
 import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.SET_USER;
+import static com.facebook.presto.testing.TestingAccessControlManager.TestingPrivilegeType.SHOW_CREATE_TABLE;
 import static com.facebook.presto.testing.TestingAccessControlManager.privilege;
 import static com.facebook.presto.testing.TestingSession.TESTING_CATALOG;
 import static com.facebook.presto.testing.assertions.Assert.assertEquals;
@@ -77,7 +81,6 @@ import static com.facebook.presto.transaction.TransactionBuilder.transaction;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static com.google.common.util.concurrent.Uninterruptibles.sleepUninterruptibly;
-import static io.airlift.units.Duration.nanosSince;
 import static java.lang.String.format;
 import static java.lang.Thread.currentThread;
 import static java.util.Collections.nCopies;
@@ -845,7 +848,7 @@ public abstract class AbstractTestDistributedQueries
 
         // Test DELETE access control
         assertUpdate("CREATE TABLE test_delete AS SELECT * FROM orders", "SELECT count(*) FROM orders");
-        assertAccessDenied("DELETE FROM test_delete where orderkey < 12", "Cannot select from columns \\[orderkey\\] in table or view .*.test_delete.*", privilege("orderkey", SELECT_COLUMN));
+        assertAccessAllowed("DELETE FROM test_delete where orderkey < 12", privilege("orderkey", DELETE_TABLE));
         assertAccessAllowed("DELETE FROM test_delete where orderkey < 12", privilege("orderdate", SELECT_COLUMN));
         assertAccessAllowed("DELETE FROM test_delete", privilege("orders", SELECT_COLUMN));
     }
@@ -891,6 +894,35 @@ public abstract class AbstractTestDistributedQueries
         assertQuery("SELECT * FROM " + name, query);
 
         assertUpdate("DROP VIEW test_view");
+    }
+
+    @Test
+    public void testViewWithReservedKeywords()
+    {
+        skipTestUnless(supportsViews());
+
+        assertUpdate("CREATE TABLE \"group\" AS SELECT * FROM orders", "SELECT count(*) FROM orders");
+
+        @Language("SQL") String query = "SELECT orderkey, orderstatus, totalprice / 2 half FROM orders";
+        @Language("SQL") String groupQuery = "SELECT orderkey, orderstatus, totalprice / 2 half FROM \"group\"";
+
+        assertUpdate("CREATE OR REPLACE VIEW test_view_with_reserved_keywords AS " + groupQuery);
+
+        assertQuery("SELECT * FROM test_view_with_reserved_keywords", query);
+
+        String expectedSql = formatSqlText(format(
+                "CREATE VIEW %s.%s.%s SECURITY %s AS %s",
+                getSession().getCatalog().get(),
+                getSession().getSchema().get(),
+                "test_view_with_reserved_keywords",
+                "DEFINER",
+                groupQuery)).trim();
+
+        MaterializedResult actual = computeActual("SHOW CREATE VIEW test_view_with_reserved_keywords");
+
+        assertEquals(getOnlyElement(actual.getOnlyColumnAsSet()), expectedSql);
+
+        assertUpdate("DROP VIEW test_view_with_reserved_keywords");
     }
 
     @Test
@@ -997,9 +1029,9 @@ public abstract class AbstractTestDistributedQueries
         // test SHOW COLUMNS
         actual = computeActual("SHOW COLUMNS FROM meta_test_view");
 
-        expected = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR)
-                .row("x", "bigint", "", "")
-                .row("y", "varchar(3)", "", "")
+        expected = resultBuilder(getSession(), VARCHAR, VARCHAR, VARCHAR, VARCHAR, BIGINT, BIGINT, BIGINT)
+                .row("x", "bigint", "", "", 19L, null, null)
+                .row("y", "varchar(3)", "", "", null, null, 3L)
                 .build();
 
         assertEquals(actual, expected);
@@ -1274,6 +1306,9 @@ public abstract class AbstractTestDistributedQueries
                 "SELECT * FROM test_invoker_view_access",
                 "Cannot select from columns \\[.*\\] in table .*.orders.*",
                 privilege(getSession().getUser(), "orders", SELECT_COLUMN));
+
+        assertAccessDenied("SHOW CREATE VIEW test_nested_view_access", "Cannot show create table for .*test_nested_view_access.*", privilege("test_nested_view_access", SHOW_CREATE_TABLE));
+        assertAccessAllowed("SHOW CREATE VIEW test_nested_view_access", privilege("test_denied_access_view", SHOW_CREATE_TABLE));
 
         assertAccessAllowed(nestedViewOwnerSession, "DROP VIEW test_nested_view_access");
         assertAccessAllowed(viewOwnerSession, "DROP VIEW test_view_access");

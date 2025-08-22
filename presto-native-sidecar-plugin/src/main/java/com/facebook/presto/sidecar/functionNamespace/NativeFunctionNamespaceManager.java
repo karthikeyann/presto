@@ -49,6 +49,7 @@ import com.facebook.presto.spi.function.SqlFunctionSupplier;
 import com.facebook.presto.spi.function.SqlInvokedAggregationFunctionImplementation;
 import com.facebook.presto.spi.function.SqlInvokedFunction;
 import com.facebook.presto.spi.function.TypeVariableConstraint;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Suppliers;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
@@ -56,8 +57,7 @@ import com.google.common.cache.LoadingCache;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.util.concurrent.UncheckedExecutionException;
-
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -66,7 +66,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import static com.facebook.presto.common.type.TypeSignatureUtils.resolveIntermediateType;
@@ -80,7 +79,6 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.MoreCollectors.onlyElement;
-import static java.lang.Long.parseLong;
 import static java.lang.String.format;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Objects.requireNonNull;
@@ -111,8 +109,7 @@ public class NativeFunctionNamespaceManager
         super(catalogName, sqlFunctionExecutors, config);
         this.functionDefinitionProvider = requireNonNull(functionDefinitionProvider, "functionDefinitionProvider is null");
         this.nodeManager = requireNonNull(nodeManager, "nodeManager is null");
-        this.memoizedFunctionsSupplier = Suppliers.memoizeWithExpiration(this::bootstrapNamespace,
-                config.getFunctionCacheExpiration().toMillis(), TimeUnit.MILLISECONDS);
+        this.memoizedFunctionsSupplier = Suppliers.memoize(this::bootstrapNamespace);
         this.functionMetadataManager = requireNonNull(functionMetadataManager, "functionMetadataManager is null");
         this.specializedFunctionKeyCache = CacheBuilder.newBuilder()
                 .maximumSize(1000)
@@ -142,7 +139,7 @@ public class NativeFunctionNamespaceManager
         Map<String, List<JsonBasedUdfFunctionMetadata>> udfSignatureMap = udfFunctionSignatureMap.getUDFSignatureMap();
         udfSignatureMap.forEach((name, metaInfoList) -> {
             List<SqlInvokedFunction> functions = metaInfoList.stream().map(metaInfo -> createSqlInvokedFunction(name, metaInfo)).collect(toImmutableList());
-            functions.forEach(function -> createFunction(function, false));
+            functions.forEach(this::createFunction);
         });
     }
 
@@ -279,18 +276,7 @@ public class NativeFunctionNamespaceManager
     @Override
     public synchronized void createFunction(SqlInvokedFunction function, boolean replace)
     {
-        checkFunctionLanguageSupported(function);
-        SqlFunctionId functionId = function.getFunctionId();
-        if (!replace && functions.containsKey(function.getFunctionId())) {
-            throw new PrestoException(DUPLICATE_FUNCTION_ERROR, format("Function '%s' already exists", functionId.getId()));
-        }
-
-        SqlInvokedFunction replacedFunction = functions.get(functionId);
-        long version = 1;
-        if (replacedFunction != null) {
-            version = parseLong(replacedFunction.getRequiredVersion()) + 1;
-        }
-        functions.put(functionId, function.withVersion(String.valueOf(version)));
+        throw new PrestoException(NOT_SUPPORTED, "Create Function is not supported in NativeFunctionNamespaceManager");
     }
 
     @Override
@@ -366,6 +352,12 @@ public class NativeFunctionNamespaceManager
         return newTypeSignaturesList;
     }
 
+    @VisibleForTesting
+    public FunctionDefinitionProvider getFunctionDefinitionProvider()
+    {
+        return functionDefinitionProvider;
+    }
+
     private static List<TypeSignatureParameter> getTypeSignatureParameters(
             TypeSignature typeSignature,
             List<TypeSignatureParameter> typeSignatureParameterList)
@@ -430,6 +422,17 @@ public class NativeFunctionNamespaceManager
     }
 
     // Hack ends here
+
+    private synchronized void createFunction(SqlInvokedFunction function)
+    {
+        checkFunctionLanguageSupported(function);
+        SqlFunctionId functionId = function.getFunctionId();
+        if (functions.containsKey(function.getFunctionId())) {
+            throw new PrestoException(DUPLICATE_FUNCTION_ERROR, format("Function '%s' already exists", functionId.getId()));
+        }
+
+        functions.put(functionId, function.withVersion("1"));
+    }
 
     private SqlFunction getSqlFunctionFromSignature(Signature signature)
     {

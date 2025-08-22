@@ -39,8 +39,8 @@ import com.facebook.presto.metadata.InternalNode;
 import com.facebook.presto.spi.NodeManager;
 import com.facebook.presto.spi.function.FunctionImplementationType;
 import com.facebook.presto.spi.function.RemoteScalarFunctionImplementation;
+import com.facebook.presto.spi.function.RestFunctionHandle;
 import com.facebook.presto.spi.function.RoutineCharacteristics;
-import com.facebook.presto.spi.function.SqlFunctionHandle;
 import com.facebook.presto.spi.function.SqlInvokedFunction;
 import com.facebook.presto.spi.page.PagesSerde;
 import com.facebook.presto.spi.page.SerializedPage;
@@ -55,17 +55,16 @@ import io.airlift.slice.BasicSliceInput;
 import io.airlift.slice.DynamicSliceOutput;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.UriBuilder;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.DataProvider;
 import org.testng.annotations.Test;
-
-import javax.ws.rs.Consumes;
-import javax.ws.rs.POST;
-import javax.ws.rs.Path;
-import javax.ws.rs.PathParam;
-import javax.ws.rs.Produces;
-import javax.ws.rs.core.MediaType;
-import javax.ws.rs.core.UriBuilder;
 
 import java.math.BigDecimal;
 import java.net.URI;
@@ -347,8 +346,12 @@ public class TestRestSqlFunctionExecutor
 
     private RemoteScalarFunctionImplementation createRemoteScalarFunctionImplementation(SqlInvokedFunction sqlInvokedFunction)
     {
-        SqlFunctionHandle sqlFunctionHandle = new SqlFunctionHandle(sqlInvokedFunction.getFunctionId(), "123");
-        return new RemoteScalarFunctionImplementation(sqlFunctionHandle, RoutineCharacteristics.Language.CPP, FunctionImplementationType.CPP);
+        RestFunctionHandle functionHandle = new RestFunctionHandle(
+                sqlInvokedFunction.getFunctionId(),
+                "123",
+                sqlInvokedFunction.getSignature(),
+                Optional.of(REST_SERVER_URI));
+        return new RemoteScalarFunctionImplementation(functionHandle, RoutineCharacteristics.Language.CPP, FunctionImplementationType.CPP);
     }
 
     private static PagesSerde createPagesSerde()

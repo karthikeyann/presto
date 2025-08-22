@@ -80,14 +80,43 @@ enum BufferType {
   DISCARDING = 3,
   SPOOLING = 4,
 }
-struct SplitWrapper {
-  1: string split;
+
+struct ConnectorSplit {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
 }
-struct TableWriteInfoWrapper {
-  1: string tableWriteInfo;
+struct ConnectorTransactionHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
 }
-struct MetadataUpdatesWrapper {
-  1: string metadataUpdates;
+struct ConnectorOutputTableHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
+}
+struct ConnectorDeleteTableHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
+}
+struct ConnectorInsertTableHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
+}
+struct ConnectorTableHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
+}
+struct ConnectorTableLayoutHandle {
+  1: optional string connectorId;
+  2: optional binary customSerializedValue;
+  3: optional string jsonValue;
+}
+struct RemoteTransactionHandle {
 }
 struct Lifespan {
   1: bool grouped;
@@ -279,10 +308,45 @@ struct TaskSource {
   3: set<Lifespan> noMoreSplitsForLifespan;
   4: bool noMoreSplits;
 }
-struct ScheduledSplit {
-  1: i64 sequenceId;
-  2: PlanNodeId planNodeId;
-  3: SplitWrapper split;
+struct SplitContext {
+  1: bool cacheable;
+}
+struct OutputTableHandle {
+  1: ConnectorId connectorId;
+  2: ConnectorTransactionHandle transactionHandle;
+  3: ConnectorOutputTableHandle connectorHandle;
+}
+struct SchemaTableName {
+  1: string schema;
+  2: string table;
+}
+struct InsertTableHandle {
+  1: ConnectorId connectorId;
+  2: ConnectorTransactionHandle transactionHandle;
+  3: ConnectorInsertTableHandle connectorHandle;
+}
+struct DeleteTableHandle {
+  1: ConnectorId connectorId;
+  2: ConnectorTransactionHandle transactionHandle;
+  3: ConnectorDeleteTableHandle connectorHandle;
+}
+struct RefreshMaterializedViewHandle {
+  1: InsertTableHandle handle;
+  2: SchemaTableName schemaTableName;
+}
+struct TableHandle {
+  1: ConnectorId connectorId;
+  2: ConnectorTableHandle connectorHandle;
+  3: ConnectorTransactionHandle transaction;
+  4: ConnectorTableLayoutHandle connectorTableLayout;
+}
+struct AnalyzeTableHandle {
+  1: ConnectorId connectorId;
+  2: ConnectorTransactionHandle transactionHandle;
+  3: ConnectorTableHandle connectorHandle;
+}
+struct Location {
+  1: string location;
 }
 struct TaskStatus {
   1: i64 taskInstanceIdLeastSignificantBits;
@@ -377,6 +441,14 @@ struct TaskStats {
   39: i32 fullGcCount;
   40: i64 fullGcTimeInMillis;
   41: RuntimeStats runtimeStats;
+  42: i32 totalSplits;
+  43: i32 queuedSplits;
+  44: i32 runningSplits;
+  45: i32 completedSplits;
+  46: i32 totalNewDrivers;
+  47: i32 queuedNewDrivers;
+  48: i32 runningNewDrivers;
+  49: i32 completedNewDrivers;
 }
 struct PipelineStats {
   1: i32 pipelineId;
@@ -476,19 +548,34 @@ struct Signature {
   6: list<TypeVariableConstraint> typeVariableConstraints;
   7: list<LongVariableConstraint> longVariableConstraints;
 }
+struct Split {
+  1: ConnectorId connectorId;
+  2: ConnectorTransactionHandle transactionHandle;
+  3: ConnectorSplit connectorSplit;
+  4: Lifespan lifespan;
+  5: SplitContext splitContext;
+}
 struct OutputBuffers {
   1: BufferType type;
   2: i64 version;
   3: bool noMoreBufferIds;
   4: map<OutputBufferId, i32> buffers;
 }
-struct TaskUpdateRequest {
-  1: SessionRepresentation session;
-  2: map<string, string> extraCredentials;
-  3: optional binary fragment;
-  4: list<TaskSource> sources;
-  5: OutputBuffers outputIds;
-  6: optional TableWriteInfoWrapper tableWriteInfo;
+struct CreateHandle {
+  1: OutputTableHandle handle;
+  2: SchemaTableName schemaTableName;
+}
+struct InsertHandle {
+  1: InsertTableHandle handle;
+  2: SchemaTableName schemaTableName;
+}
+struct DeleteHandle {
+  1: DeleteTableHandle handle;
+  2: SchemaTableName schemaTableName;
+}
+struct UpdateHandle {
+  1: TableHandle handle;
+  2: SchemaTableName schemaTableName;
 }
 struct ExecutionFailureInfo {
   1: string type;
@@ -527,6 +614,18 @@ struct SqlInvokedFunction {
   6: Signature signature;
   7: SqlFunctionId functionId;
 }
+struct ScheduledSplit {
+  1: i64 sequenceId;
+  2: PlanNodeId planNodeId;
+  3: Split split;
+}
+union ExecutionWriterTargetUnion {
+  1: CreateHandle createHandle;
+  2: InsertHandle insertHandle;
+  3: DeleteHandle deleteHandle;
+  4: RefreshMaterializedViewHandle refreshMaterializedViewHandle;
+  5: UpdateHandle updateHandle;
+}
 struct TaskInfo {
   1: TaskId taskId;
   2: TaskStatus taskStatus;
@@ -535,8 +634,11 @@ struct TaskInfo {
   5: set<PlanNodeId> noMoreSplits;
   6: TaskStats stats;
   7: bool needsPlan;
-  8: MetadataUpdatesWrapper metadataUpdates;
-  9: string nodeId;
+  8: string nodeId;
+}
+struct RemoteSplit {
+  1: Location location;
+  2: TaskId remoteSourceTaskId;
 }
 struct OperatorStats {
   1: i32 stageId;
@@ -587,6 +689,18 @@ struct OperatorStats {
   46: double isBlockedWall;
   47: double isBlockedCpu;
   48: i64 isBlockedAllocationInBytes;
+}
+struct TableWriteInfo {
+  1: ExecutionWriterTargetUnion writerTargetUnion;
+  2: optional AnalyzeTableHandle analyzeTableHandle;
+}
+struct TaskUpdateRequest {
+  1: SessionRepresentation session;
+  2: map<string, string> extraCredentials;
+  3: optional binary fragment;
+  4: list<TaskSource> sources;
+  5: OutputBuffers outputIds;
+  6: optional TableWriteInfo tableWriteInfo;
 }
 
 service PrestoThrift {

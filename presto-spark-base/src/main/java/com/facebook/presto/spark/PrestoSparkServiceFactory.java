@@ -19,6 +19,7 @@ import com.facebook.presto.spark.classloader_interface.IPrestoSparkServiceFactor
 import com.facebook.presto.spark.classloader_interface.PrestoSparkBootstrapTimer;
 import com.facebook.presto.spark.classloader_interface.PrestoSparkConfiguration;
 import com.facebook.presto.spark.classloader_interface.SparkProcessType;
+import com.facebook.presto.spark.execution.nativeprocess.NativeExecutionModule;
 import com.facebook.presto.sql.parser.SqlParserOptions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -47,6 +48,7 @@ public class PrestoSparkServiceFactory
                 sparkProcessType,
                 properties.build(),
                 configuration.getCatalogProperties(),
+                configuration.getNativeWorkerConfigProperties(),
                 configuration.getEventListenerProperties(),
                 configuration.getAccessControlProperties(),
                 configuration.getSessionPropertyConfigurationProperties(),
@@ -66,7 +68,9 @@ public class PrestoSparkServiceFactory
     {
         checkArgument(METADATA_STORAGE_TYPE_LOCAL.equalsIgnoreCase(configuration.getMetadataStorageType()), "only local metadata storage is supported");
         return ImmutableList.of(
-                new PrestoSparkLocalMetadataStorageModule());
+                new PrestoSparkLocalMetadataStorageModule(),
+                // TODO: Need to let NativeExecutionModule addition be controlled by configuration as well.
+                new NativeExecutionModule());
     }
 
     protected SqlParserOptions getSqlParserOptions()

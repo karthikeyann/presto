@@ -43,8 +43,7 @@ import com.google.common.base.Strings;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableMultimap;
-
-import javax.inject.Inject;
+import jakarta.inject.Inject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -333,7 +332,7 @@ public class DeltaMetadata
         }
 
         List<ColumnMetadata> columnMetadata = tableHandle.getDeltaTable().getColumns().stream()
-                .map(this::getColumnMetadata)
+                .map(column -> getColumnMetadata(session, column))
                 .collect(Collectors.toList());
 
         return new ConnectorTableMetadata(tableName, columnMetadata);
@@ -362,10 +361,10 @@ public class DeltaMetadata
         return ImmutableList.of(new SchemaTableName(prefix.getSchemaName(), prefix.getTableName()));
     }
 
-    private ColumnMetadata getColumnMetadata(DeltaColumn deltaColumn)
+    private ColumnMetadata getColumnMetadata(ConnectorSession session, DeltaColumn deltaColumn)
     {
         return ColumnMetadata.builder()
-                .setName(deltaColumn.getName())
+                .setName(normalizeIdentifier(session, deltaColumn.getName()))
                 .setType(typeManager.getType(deltaColumn.getType()))
                 .build();
     }

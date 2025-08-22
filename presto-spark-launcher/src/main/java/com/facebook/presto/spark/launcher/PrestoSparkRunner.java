@@ -70,6 +70,7 @@ public class PrestoSparkRunner
                 distribution.getConfigProperties(),
                 distribution.getCatalogProperties(),
                 distribution.getPrestoSparkProperties(),
+                distribution.getNativeWorkerConfigProperties(),
                 distribution.getEventListenerProperties(),
                 distribution.getAccessControlProperties(),
                 distribution.getSessionPropertyConfigurationProperties(),
@@ -232,6 +233,7 @@ public class PrestoSparkRunner
             Map<String, String> configProperties,
             Map<String, Map<String, String>> catalogProperties,
             Map<String, String> prestoSparkProperties,
+            Optional<Map<String, String>> nativeWorkerConfigProperties,
             Optional<Map<String, String>> eventListenerProperties,
             Optional<Map<String, String>> accessControlProperties,
             Optional<Map<String, String>> sessionPropertyConfigurationProperties,
@@ -249,6 +251,7 @@ public class PrestoSparkRunner
                 pluginsDirectory.getAbsolutePath(),
                 catalogProperties,
                 prestoSparkProperties,
+                nativeWorkerConfigProperties,
                 eventListenerProperties,
                 accessControlProperties,
                 sessionPropertyConfigurationProperties,
@@ -273,6 +276,7 @@ public class PrestoSparkRunner
     {
         private final PackageSupplier packageSupplier;
         private final Map<String, String> configProperties;
+        private final Map<String, String> nativeWorkerConfigProperties;
         private final Map<String, Map<String, String>> catalogProperties;
         private final Map<String, String> prestoSparkProperties;
         private final Map<String, String> eventListenerProperties;
@@ -290,6 +294,7 @@ public class PrestoSparkRunner
             requireNonNull(distribution, "distribution is null");
             this.packageSupplier = distribution.getPackageSupplier();
             this.configProperties = distribution.getConfigProperties();
+            this.nativeWorkerConfigProperties = distribution.getNativeWorkerConfigProperties().orElse(null);
             this.catalogProperties = distribution.getCatalogProperties();
             this.prestoSparkProperties = distribution.getPrestoSparkProperties();
             this.bootstrapMetricsCollector = requireNonNull(bootstrapMetricsCollector);
@@ -310,9 +315,18 @@ public class PrestoSparkRunner
             return prestoSparkService.getTaskExecutorFactory();
         }
 
+        @Override
+        public IPrestoSparkTaskExecutorFactory getNative()
+        {
+            checkState(TaskContext.get() != null, "this method is expected to be called only from the main task thread on the spark executor");
+            IPrestoSparkService prestoSparkService = getOrCreatePrestoSparkService();
+            return prestoSparkService.getNativeTaskExecutorFactory();
+        }
+
         private static IPrestoSparkService service;
         private static String currentPackagePath;
         private static Map<String, String> currentConfigProperties;
+        private static Map<String, String> currentNativeWorkerConfigProperties;
         private static Map<String, Map<String, String>> currentCatalogProperties;
         private static Map<String, String> currentPrestoSparkProperties;
         private static Map<String, String> currentEventListenerProperties;
@@ -331,6 +345,7 @@ public class PrestoSparkRunner
                             configProperties,
                             catalogProperties,
                             prestoSparkProperties,
+                            Optional.ofNullable(nativeWorkerConfigProperties),
                             Optional.ofNullable(eventListenerProperties),
                             Optional.ofNullable(accessControlProperties),
                             Optional.ofNullable(sessionPropertyConfigurationProperties),
@@ -340,6 +355,7 @@ public class PrestoSparkRunner
 
                     currentPackagePath = getPackagePath(packageSupplier);
                     currentConfigProperties = configProperties;
+                    currentNativeWorkerConfigProperties = nativeWorkerConfigProperties;
                     currentCatalogProperties = catalogProperties;
                     currentPrestoSparkProperties = prestoSparkProperties;
                     currentEventListenerProperties = eventListenerProperties;
@@ -351,6 +367,7 @@ public class PrestoSparkRunner
                 else {
                     checkEquals("packagePath", currentPackagePath, getPackagePath(packageSupplier));
                     checkEquals("configProperties", currentConfigProperties, configProperties);
+                    checkEquals("nativeWorkerConfigProperties", currentNativeWorkerConfigProperties, nativeWorkerConfigProperties);
                     checkEquals("catalogProperties", currentCatalogProperties, catalogProperties);
                     checkEquals("prestoSparkProperties", currentPrestoSparkProperties, prestoSparkProperties);
                     checkEquals("eventListenerProperties", currentEventListenerProperties, eventListenerProperties);

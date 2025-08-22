@@ -33,8 +33,8 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Streams;
+import jakarta.inject.Inject;
 
-import javax.inject.Inject;
 import javax.management.JMException;
 import javax.management.MBeanAttributeInfo;
 import javax.management.MBeanInfo;
@@ -175,7 +175,22 @@ public class JmxMetadata
     @Override
     public ConnectorTableMetadata getTableMetadata(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
-        return ((JmxTableHandle) tableHandle).getTableMetadata();
+        JmxTableHandle jmxTableHandle = (JmxTableHandle) tableHandle;
+        return getTableMetadata(session, getTableName(jmxTableHandle), jmxTableHandle.getColumnHandles());
+    }
+
+    public ConnectorTableMetadata getTableMetadata(ConnectorSession session, SchemaTableName schemaTableName, List<JmxColumnHandle> columnHandles)
+    {
+        List<ColumnMetadata> columns = columnHandles.stream()
+                .map(column -> column.getColumnMetadata(normalizeIdentifier(session, column.getColumnName())))
+                .collect(toImmutableList());
+
+        return new ConnectorTableMetadata(schemaTableName, columns);
+    }
+
+    private static SchemaTableName getTableName(ConnectorTableHandle tableHandle)
+    {
+        return ((JmxTableHandle) tableHandle).getTableName();
     }
 
     @Override
@@ -216,7 +231,7 @@ public class JmxMetadata
     public Map<String, ColumnHandle> getColumnHandles(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
         JmxTableHandle jmxTableHandle = (JmxTableHandle) tableHandle;
-        return ImmutableMap.copyOf(Maps.uniqueIndex(jmxTableHandle.getColumnHandles(), column -> column.getColumnName().toLowerCase(ENGLISH)));
+        return ImmutableMap.copyOf(Maps.uniqueIndex(jmxTableHandle.getColumnHandles(), column -> normalizeIdentifier(session, column.getColumnName())));
     }
 
     @Override

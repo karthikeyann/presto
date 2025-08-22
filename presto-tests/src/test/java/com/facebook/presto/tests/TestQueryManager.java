@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.tests;
 
+import com.facebook.airlift.units.DataSize;
+import com.facebook.airlift.units.Duration;
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
 import com.facebook.presto.common.RuntimeStats;
@@ -41,8 +43,6 @@ import com.google.common.base.Stopwatch;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import io.airlift.units.DataSize;
-import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 import org.joda.time.DateTime;
 import org.testng.annotations.AfterClass;
@@ -380,6 +380,12 @@ public class TestQueryManager
         }
 
         @Override
+        public Duration getQueuedTime()
+        {
+            return info.getQueryStats().getQueuedTime();
+        }
+
+        @Override
         public Duration getTotalCpuTime()
         {
             return info.getQueryStats().getTotalCpuTime();
@@ -469,6 +475,14 @@ public class TestQueryManager
                         17,
                         18,
                         34,
+                        19,
+                        100,
+                        17,
+                        18,
+                        19,
+                        100,
+                        17,
+                        18,
                         19,
                         20.0,
                         43.0,

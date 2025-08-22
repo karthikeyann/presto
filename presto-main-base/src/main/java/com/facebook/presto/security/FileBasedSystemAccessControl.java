@@ -14,6 +14,7 @@
 package com.facebook.presto.security;
 
 import com.facebook.airlift.log.Logger;
+import com.facebook.airlift.units.Duration;
 import com.facebook.presto.common.CatalogSchemaName;
 import com.facebook.presto.common.QualifiedObjectName;
 import com.facebook.presto.plugin.base.security.ForwardingSystemAccessControl;
@@ -36,7 +37,6 @@ import com.facebook.presto.spi.security.ViewExpression;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
-import io.airlift.units.Duration;
 
 import java.nio.file.Paths;
 import java.security.Principal;
@@ -75,6 +75,8 @@ import static com.facebook.presto.spi.security.AccessDeniedException.denyRenameV
 import static com.facebook.presto.spi.security.AccessDeniedException.denyRevokeTablePrivilege;
 import static com.facebook.presto.spi.security.AccessDeniedException.denySetTableProperties;
 import static com.facebook.presto.spi.security.AccessDeniedException.denySetUser;
+import static com.facebook.presto.spi.security.AccessDeniedException.denyShowColumnsMetadata;
+import static com.facebook.presto.spi.security.AccessDeniedException.denyShowCreateTable;
 import static com.facebook.presto.spi.security.AccessDeniedException.denyTruncateTable;
 import static com.facebook.presto.spi.security.AccessDeniedException.denyUpdateTableColumns;
 import static com.google.common.base.Preconditions.checkState;
@@ -281,6 +283,14 @@ public class FileBasedSystemAccessControl
     }
 
     @Override
+    public void checkCanShowCreateTable(Identity identity, AccessControlContext context, CatalogSchemaTableName table)
+    {
+        if (!canAccessCatalog(identity, table.getCatalogName(), READ_ONLY)) {
+            denyShowCreateTable(table.toString());
+        }
+    }
+
+    @Override
     public void checkCanCreateTable(Identity identity, AccessControlContext context, CatalogSchemaTableName table)
     {
         if (!canAccessCatalog(identity, table.getCatalogName(), ALL)) {
@@ -332,6 +342,24 @@ public class FileBasedSystemAccessControl
         }
 
         return tableNames;
+    }
+
+    @Override
+    public void checkCanShowColumnsMetadata(Identity identity, AccessControlContext context, CatalogSchemaTableName table)
+    {
+        if (!canAccessCatalog(identity, table.getCatalogName(), READ_ONLY)) {
+            denyShowColumnsMetadata(table.toString());
+        }
+    }
+
+    @Override
+    public List<ColumnMetadata> filterColumns(Identity identity, AccessControlContext context, CatalogSchemaTableName table, List<ColumnMetadata> columns)
+    {
+        if (!canAccessCatalog(identity, table.getCatalogName(), READ_ONLY)) {
+            return ImmutableList.of();
+        }
+
+        return columns;
     }
 
     @Override

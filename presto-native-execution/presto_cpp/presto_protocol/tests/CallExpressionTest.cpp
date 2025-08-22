@@ -44,7 +44,8 @@ TEST_F(CallExpressionTest, dollarStatic) {
                 "returnType": "real",
                 "typeVariableConstraints": [],
                 "variableArity": false
-              }
+              },
+              "builtInFunctionKind": "ENGINE"
             },
             "returnType": "double"
           }
@@ -76,6 +77,7 @@ TEST_F(CallExpressionTest, dollarStatic) {
     ASSERT_EQ(k->signature.argumentTypes[0], "real");
     ASSERT_EQ(k->signature.kind, FunctionKind::AGGREGATE);
     ASSERT_EQ(k->signature.returnType, "real");
+    ASSERT_EQ(k->builtInFunctionKind, BuiltInFunctionKind::ENGINE);
   }
 
   testJsonRoundtrip(j, p);
@@ -94,7 +96,7 @@ TEST_F(CallExpressionTest, json_file) {
             ],
             "displayName": "sum",
             "functionHandle": {
-              "@type": "json_file",
+              "@type": "sql_function_handle",
               "functionId": "json.x4.sum;INTEGER;INTEGER",
               "version": "1"
             },
@@ -121,7 +123,7 @@ TEST_F(CallExpressionTest, json_file) {
 
   ASSERT_NE(p.functionHandle, nullptr);
   {
-    ASSERT_EQ(p.functionHandle->_type, "json_file");
+    ASSERT_EQ(p.functionHandle->_type, "sql_function_handle");
     std::shared_ptr<SqlFunctionHandle> k =
         std::static_pointer_cast<SqlFunctionHandle>(p.functionHandle);
     ASSERT_EQ(k->functionId, "json.x4.sum;INTEGER;INTEGER");

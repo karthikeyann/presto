@@ -27,9 +27,9 @@ import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.json.smile.SmileCodec;
 import com.facebook.airlift.log.Logger;
 import com.facebook.airlift.stats.DecayCounter;
+import com.facebook.airlift.units.Duration;
 import com.facebook.drift.transport.netty.codec.Protocol;
 import com.facebook.presto.Session;
-import com.facebook.presto.connector.ConnectorTypeSerdeManager;
 import com.facebook.presto.execution.FutureStateChange;
 import com.facebook.presto.execution.Lifespan;
 import com.facebook.presto.execution.NodeTaskMap.NodeStatsTracker;
@@ -50,7 +50,6 @@ import com.facebook.presto.execution.buffer.PageBufferInfo;
 import com.facebook.presto.execution.scheduler.TableWriteInfo;
 import com.facebook.presto.metadata.HandleResolver;
 import com.facebook.presto.metadata.MetadataManager;
-import com.facebook.presto.metadata.MetadataUpdates;
 import com.facebook.presto.metadata.Split;
 import com.facebook.presto.operator.TaskStats;
 import com.facebook.presto.server.RequestErrorTracker;
@@ -75,12 +74,10 @@ import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.SettableFuture;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 import com.sun.management.ThreadMXBean;
-import io.airlift.units.Duration;
 import it.unimi.dsi.fastutil.longs.LongArrayList;
-
-import javax.annotation.Nullable;
-import javax.annotation.concurrent.GuardedBy;
+import jakarta.annotation.Nullable;
 
 import java.lang.management.ManagementFactory;
 import java.net.URI;
@@ -121,7 +118,6 @@ import static com.facebook.presto.server.RequestErrorTracker.taskRequestErrorTra
 import static com.facebook.presto.server.RequestHelpers.setContentTypeHeaders;
 import static com.facebook.presto.server.RequestHelpers.setTaskInfoAcceptTypeHeaders;
 import static com.facebook.presto.server.RequestHelpers.setTaskUpdateRequestContentTypeHeaders;
-import static com.facebook.presto.server.TaskResourceUtils.convertFromThriftTaskInfo;
 import static com.facebook.presto.server.smile.AdaptingJsonResponseHandler.createAdaptingJsonResponseHandler;
 import static com.facebook.presto.server.smile.FullSmileResponseHandler.createFullSmileResponseHandler;
 import static com.facebook.presto.server.thrift.ThriftCodecWrapper.unwrapThriftCodec;
@@ -228,7 +224,6 @@ public final class HttpRemoteTask
     private final boolean taskUpdateRequestThriftSerdeEnabled;
     private final boolean taskInfoResponseThriftSerdeEnabled;
     private final Protocol thriftProtocol;
-    private final ConnectorTypeSerdeManager connectorTypeSerdeManager;
     private final HandleResolver handleResolver;
     private final long maxTaskUpdateSizeInBytes;
     private final int maxUnacknowledgedSplits;
@@ -263,7 +258,6 @@ public final class HttpRemoteTask
             Codec<TaskUpdateRequest> taskUpdateRequestCodec,
             Codec<TaskInfo> taskInfoResponseCodec,
             Codec<PlanFragment> planFragmentCodec,
-            Codec<MetadataUpdates> metadataUpdatesCodec,
             NodeStatsTracker nodeStatsTracker,
             RemoteTaskStats stats,
             boolean binaryTransportEnabled,
@@ -279,7 +273,6 @@ public final class HttpRemoteTask
             DecayCounter taskUpdateRequestSize,
             boolean taskUpdateSizeTrackingEnabled,
             HandleResolver handleResolver,
-            ConnectorTypeSerdeManager connectorTypeSerdeManager,
             SchedulerStatsTracker schedulerStatsTracker)
     {
         requireNonNull(session, "session is null");
@@ -304,7 +297,6 @@ public final class HttpRemoteTask
         requireNonNull(queryManager, "queryManager is null");
         requireNonNull(thriftProtocol, "thriftProtocol is null");
         requireNonNull(handleResolver, "handleResolver is null");
-        requireNonNull(connectorTypeSerdeManager, "connectorTypeSerdeManager is null");
         requireNonNull(taskUpdateRequestSize, "taskUpdateRequestSize cannot be null");
         requireNonNull(schedulerStatsTracker, "schedulerStatsTracker is null");
 
@@ -335,7 +327,6 @@ public final class HttpRemoteTask
             this.taskUpdateRequestThriftSerdeEnabled = taskUpdateRequestThriftSerdeEnabled;
             this.taskInfoResponseThriftSerdeEnabled = taskInfoResponseThriftSerdeEnabled;
             this.thriftProtocol = thriftProtocol;
-            this.connectorTypeSerdeManager = connectorTypeSerdeManager;
             this.handleResolver = handleResolver;
             this.tableWriteInfo = tableWriteInfo;
             this.maxTaskUpdateSizeInBytes = maxTaskUpdateSizeInBytes;
@@ -395,7 +386,6 @@ public final class HttpRemoteTask
                     taskInfoUpdateInterval,
                     taskInfoRefreshMaxWait,
                     taskInfoCodec,
-                    metadataUpdatesCodec,
                     maxErrorDuration,
                     summarizeTaskInfo,
                     executor,
@@ -408,7 +398,6 @@ public final class HttpRemoteTask
                     metadataManager,
                     queryManager,
                     handleResolver,
-                    connectorTypeSerdeManager,
                     thriftProtocol);
 
             taskStatusFetcher.addStateChangeListener(newStatus -> {
@@ -746,7 +735,7 @@ public final class HttpRemoteTask
     {
         //Setting the flag as false since TaskUpdateRequest is not on thrift yet.
         //Once it is converted to thrift we can use the isThrift enabled flag here.
-        updateTaskInfo(newValue, false);
+        updateTaskInfo(newValue);
 
         // remove acknowledged splits, which frees memory
         for (TaskSource source : sources) {
@@ -781,7 +770,7 @@ public final class HttpRemoteTask
     private void onSuccessTaskInfo(TaskInfo result)
     {
         try {
-            updateTaskInfo(result, taskInfoThriftTransportEnabled);
+            updateTaskInfo(result);
         }
         finally {
             if (!getTaskInfo().getTaskStatus().getState().isDone()) {
@@ -790,12 +779,9 @@ public final class HttpRemoteTask
         }
     }
 
-    private void updateTaskInfo(TaskInfo taskInfo, boolean isTaskInfoThriftTransportEnabled)
+    private void updateTaskInfo(TaskInfo taskInfo)
     {
         taskStatusFetcher.updateTaskStatus(taskInfo.getTaskStatus());
-        if (isTaskInfoThriftTransportEnabled) {
-            taskInfo = convertFromThriftTaskInfo(taskInfo, connectorTypeSerdeManager, handleResolver);
-        }
         taskInfoFetcher.updateTaskInfo(taskInfo);
     }
 
@@ -817,7 +803,7 @@ public final class HttpRemoteTask
 
         // Since this TaskInfo is updated in the client the "complete" flag will not be set,
         // indicating that the stats may not reflect the final stats on the worker.
-        updateTaskInfo(getTaskInfo().withTaskStatus(getTaskStatus()), taskInfoThriftTransportEnabled);
+        updateTaskInfo(getTaskInfo().withTaskStatus(getTaskStatus()));
     }
 
     private void onFailureTaskInfo(

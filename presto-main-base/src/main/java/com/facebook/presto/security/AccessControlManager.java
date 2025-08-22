@@ -42,10 +42,9 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import jakarta.inject.Inject;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
-
-import javax.inject.Inject;
 
 import java.io.File;
 import java.security.Principal;
@@ -295,6 +294,22 @@ public class AccessControlManager
     }
 
     @Override
+    public void checkCanShowCreateTable(TransactionId transactionId, Identity identity, AccessControlContext context, QualifiedObjectName tableName)
+    {
+        requireNonNull(identity, "identity is null");
+        requireNonNull(tableName, "tableName is null");
+
+        authenticationCheck(() -> checkCanAccessCatalog(identity, context, tableName.getCatalogName()));
+
+        authorizationCheck(() -> systemAccessControl.get().checkCanShowCreateTable(identity, context, toCatalogSchemaTableName(tableName)));
+
+        CatalogAccessControlEntry entry = getConnectorAccessControl(transactionId, tableName.getCatalogName());
+        if (entry != null) {
+            authorizationCheck(() -> entry.getAccessControl().checkCanShowCreateTable(entry.getTransactionHandle(transactionId), identity.toConnectorIdentity(tableName.getCatalogName()), context, toSchemaTableName(tableName)));
+        }
+    }
+
+    @Override
     public void checkCanCreateTable(TransactionId transactionId, Identity identity, AccessControlContext context, QualifiedObjectName tableName)
     {
         requireNonNull(identity, "identity is null");
@@ -390,6 +405,46 @@ public class AccessControlManager
             tableNames = entry.getAccessControl().filterTables(entry.getTransactionHandle(transactionId), identity.toConnectorIdentity(catalogName), context, tableNames);
         }
         return tableNames;
+    }
+
+    @Override
+    public void checkCanShowColumnsMetadata(TransactionId transactionId, Identity identity, AccessControlContext context, QualifiedObjectName tableName)
+    {
+        requireNonNull(identity, "identity is null");
+        requireNonNull(tableName, "table is null");
+
+        CatalogSchemaTableName catalogSchemaTableName = toCatalogSchemaTableName(tableName);
+
+        authenticationCheck(() -> checkCanAccessCatalog(identity, context, tableName.getCatalogName()));
+
+        authorizationCheck(() -> systemAccessControl.get().checkCanShowColumnsMetadata(identity, context, catalogSchemaTableName));
+
+        CatalogAccessControlEntry entry = getConnectorAccessControl(transactionId, tableName.getCatalogName());
+        if (entry != null) {
+            authorizationCheck(() -> entry.getAccessControl().checkCanShowColumnsMetadata(entry.getTransactionHandle(transactionId), identity.toConnectorIdentity(), context, catalogSchemaTableName.getSchemaTableName()));
+        }
+    }
+
+    @Override
+    public List<ColumnMetadata> filterColumns(TransactionId transactionId, Identity identity, AccessControlContext context, QualifiedObjectName tableName, List<ColumnMetadata> columns)
+    {
+        requireNonNull(transactionId, "transaction is null");
+        requireNonNull(identity, "identity is null");
+        requireNonNull(tableName, "tableName is null");
+
+        SchemaTableName schemaTableName = new SchemaTableName(tableName.getSchemaName(), tableName.getObjectName());
+
+        if (filterTables(transactionId, identity, context, tableName.getCatalogName(), ImmutableSet.of(schemaTableName)).isEmpty()) {
+            return ImmutableList.of();
+        }
+
+        columns = systemAccessControl.get().filterColumns(identity, context, toCatalogSchemaTableName(tableName), columns);
+
+        CatalogAccessControlEntry entry = getConnectorAccessControl(transactionId, tableName.getCatalogName());
+        if (entry != null) {
+            columns = entry.getAccessControl().filterColumns(entry.getTransactionHandle(transactionId), identity.toConnectorIdentity(), context, schemaTableName, columns);
+        }
+        return columns;
     }
 
     @Override

@@ -86,17 +86,9 @@ public interface Connector
     }
 
     /**
-     * @throws UnsupportedOperationException if this connector does not support metadata updates
+     * @throws UnsupportedOperationException if this connector does not support connector specific codec
      */
-    default ConnectorMetadataUpdaterProvider getConnectorMetadataUpdaterProvider()
-    {
-        throw new UnsupportedOperationException();
-    }
-
-    /**
-     * @throws UnsupportedOperationException if this connector does not support connector type serde
-     */
-    default ConnectorTypeSerdeProvider getConnectorTypeSerdeProvider()
+    default ConnectorCodecProvider getConnectorCodecProvider()
     {
         throw new UnsupportedOperationException();
     }
@@ -113,6 +105,14 @@ public interface Connector
      * @return the set of procedures provided by this connector
      */
     default Set<Procedure> getProcedures()
+    {
+        return emptySet();
+    }
+
+    /**
+     * @return the set of functions provided by this connector
+     */
+    default Set<Class<?>> getSystemFunctions()
     {
         return emptySet();
     }

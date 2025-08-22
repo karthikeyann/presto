@@ -118,6 +118,14 @@ void to_json(json& j, const std::shared_ptr<FunctionHandle>& p) {
     j = *std::static_pointer_cast<SqlFunctionHandle>(p);
     return;
   }
+  if (type == "sql_function_handle") {
+    j = *std::static_pointer_cast<SqlFunctionHandle>(p);
+    return;
+  }
+  if (type == "rest") {
+    j = *std::static_pointer_cast<RestFunctionHandle>(p);
+    return;
+  }
 
   throw TypeError(type + " no abstract type FunctionHandle ");
 }
@@ -147,6 +155,20 @@ void from_json(const json& j, std::shared_ptr<FunctionHandle>& p) {
   if (type == "json_file") {
     std::shared_ptr<SqlFunctionHandle> k =
         std::make_shared<SqlFunctionHandle>();
+    j.get_to(*k);
+    p = std::static_pointer_cast<FunctionHandle>(k);
+    return;
+  }
+  if (type == "sql_function_handle") {
+    std::shared_ptr<SqlFunctionHandle> k =
+        std::make_shared<SqlFunctionHandle>();
+    j.get_to(*k);
+    p = std::static_pointer_cast<FunctionHandle>(k);
+    return;
+  }
+  if (type == "rest") {
+    std::shared_ptr<RestFunctionHandle> k =
+        std::make_shared<RestFunctionHandle>();
     j.get_to(*k);
     p = std::static_pointer_cast<FunctionHandle>(k);
     return;
@@ -2252,6 +2274,10 @@ void to_json(json& j, const std::shared_ptr<ExecutionWriterTarget>& p) {
     j = *std::static_pointer_cast<DeleteHandle>(p);
     return;
   }
+  if (type == "UpdateHandle") {
+    j = *std::static_pointer_cast<UpdateHandle>(p);
+    return;
+  }
 
   throw TypeError(type + " no abstract type ExecutionWriterTarget ");
 }
@@ -2286,6 +2312,12 @@ void from_json(const json& j, std::shared_ptr<ExecutionWriterTarget>& p) {
   }
   if (type == "DeleteHandle") {
     std::shared_ptr<DeleteHandle> k = std::make_shared<DeleteHandle>();
+    j.get_to(*k);
+    p = std::static_pointer_cast<ExecutionWriterTarget>(k);
+    return;
+  }
+  if (type == "UpdateHandle") {
+    std::shared_ptr<UpdateHandle> k = std::make_shared<UpdateHandle>();
     j.get_to(*k);
     p = std::static_pointer_cast<ExecutionWriterTarget>(k);
     return;
@@ -2762,6 +2794,45 @@ void from_json(const json& j, BufferInfo& p) {
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+// Loosly copied this here from NLOHMANN_JSON_SERIALIZE_ENUM()
+
+// NOLINTNEXTLINE: cppcoreguidelines-avoid-c-arrays
+static const std::pair<BuiltInFunctionKind, json>
+    BuiltInFunctionKind_enum_table[] = { // NOLINT: cert-err58-cpp
+        {BuiltInFunctionKind::ENGINE, "ENGINE"},
+        {BuiltInFunctionKind::PLUGIN, "PLUGIN"}};
+void to_json(json& j, const BuiltInFunctionKind& e) {
+  static_assert(
+      std::is_enum<BuiltInFunctionKind>::value,
+      "BuiltInFunctionKind must be an enum!");
+  const auto* it = std::find_if(
+      std::begin(BuiltInFunctionKind_enum_table),
+      std::end(BuiltInFunctionKind_enum_table),
+      [e](const std::pair<BuiltInFunctionKind, json>& ej_pair) -> bool {
+        return ej_pair.first == e;
+      });
+  j = ((it != std::end(BuiltInFunctionKind_enum_table))
+           ? it
+           : std::begin(BuiltInFunctionKind_enum_table))
+          ->second;
+}
+void from_json(const json& j, BuiltInFunctionKind& e) {
+  static_assert(
+      std::is_enum<BuiltInFunctionKind>::value,
+      "BuiltInFunctionKind must be an enum!");
+  const auto* it = std::find_if(
+      std::begin(BuiltInFunctionKind_enum_table),
+      std::end(BuiltInFunctionKind_enum_table),
+      [&j](const std::pair<BuiltInFunctionKind, json>& ej_pair) -> bool {
+        return ej_pair.second == j;
+      });
+  e = ((it != std::end(BuiltInFunctionKind_enum_table))
+           ? it
+           : std::begin(BuiltInFunctionKind_enum_table))
+          ->first;
+}
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 BuiltInFunctionHandle::BuiltInFunctionHandle() noexcept {
   _type = "$static";
 }
@@ -2776,6 +2847,13 @@ void to_json(json& j, const BuiltInFunctionHandle& p) {
       "BuiltInFunctionHandle",
       "Signature",
       "signature");
+  to_json_key(
+      j,
+      "builtInFunctionKind",
+      p.builtInFunctionKind,
+      "BuiltInFunctionHandle",
+      "BuiltInFunctionKind",
+      "builtInFunctionKind");
 }
 
 void from_json(const json& j, BuiltInFunctionHandle& p) {
@@ -2787,6 +2865,13 @@ void from_json(const json& j, BuiltInFunctionHandle& p) {
       "BuiltInFunctionHandle",
       "Signature",
       "signature");
+  from_json_key(
+      j,
+      "builtInFunctionKind",
+      p.builtInFunctionKind,
+      "BuiltInFunctionHandle",
+      "BuiltInFunctionKind",
+      "builtInFunctionKind");
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
@@ -5670,6 +5755,13 @@ void to_json(json& j, const IndexJoinNode& p) {
       "IndexJoinNode",
       "VariableReferenceExpression",
       "indexHashVariable");
+  to_json_key(
+      j,
+      "lookupVariables",
+      p.lookupVariables,
+      "IndexJoinNode",
+      "List<VariableReferenceExpression>",
+      "lookupVariables");
 }
 
 void from_json(const json& j, IndexJoinNode& p) {
@@ -5718,6 +5810,13 @@ void from_json(const json& j, IndexJoinNode& p) {
       "IndexJoinNode",
       "VariableReferenceExpression",
       "indexHashVariable");
+  from_json_key(
+      j,
+      "lookupVariables",
+      p.lookupVariables,
+      "IndexJoinNode",
+      "List<VariableReferenceExpression>",
+      "lookupVariables");
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
@@ -6341,6 +6440,13 @@ void to_json(json& j, const JsonBasedUdfFunctionMetadata& p) {
       "JsonBasedUdfFunctionMetadata",
       "List<LongVariableConstraint>",
       "longVariableConstraints");
+  to_json_key(
+      j,
+      "executionEndpoint",
+      p.executionEndpoint,
+      "JsonBasedUdfFunctionMetadata",
+      "URI",
+      "executionEndpoint");
 }
 
 void from_json(const json& j, JsonBasedUdfFunctionMetadata& p) {
@@ -6428,6 +6534,13 @@ void from_json(const json& j, JsonBasedUdfFunctionMetadata& p) {
       "JsonBasedUdfFunctionMetadata",
       "List<LongVariableConstraint>",
       "longVariableConstraints");
+  from_json_key(
+      j,
+      "executionEndpoint",
+      p.executionEndpoint,
+      "JsonBasedUdfFunctionMetadata",
+      "URI",
+      "executionEndpoint");
 }
 } // namespace facebook::presto::protocol
 // dependency KeyedSubclass
@@ -6917,64 +7030,6 @@ void from_json(const json& j, MergeJoinNode& p) {
       "MergeJoinNode",
       "VariableReferenceExpression",
       "rightHashVariable");
-}
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-void to_json(json& j, const std::shared_ptr<ConnectorMetadataUpdateHandle>& p) {
-  if (p == nullptr) {
-    return;
-  }
-  String type = p->_type;
-  getConnectorProtocol(type).to_json(j, p);
-}
-
-void from_json(
-    const json& j,
-    std::shared_ptr<ConnectorMetadataUpdateHandle>& p) {
-  String type;
-  try {
-    type = p->getSubclassKey(j);
-  } catch (json::parse_error& e) {
-    throw ParseError(std::string(e.what()) + " ConnectorMetadataUpdateHandle");
-  }
-  getConnectorProtocol(type).from_json(j, p);
-}
-} // namespace facebook::presto::protocol
-namespace facebook::presto::protocol {
-
-void to_json(json& j, const MetadataUpdates& p) {
-  j = json::object();
-  to_json_key(
-      j,
-      "connectorId",
-      p.connectorId,
-      "MetadataUpdates",
-      "ConnectorId",
-      "connectorId");
-  to_json_key(
-      j,
-      "metadataUpdates",
-      p.metadataUpdates,
-      "MetadataUpdates",
-      "List<std::shared_ptr<ConnectorMetadataUpdateHandle>>",
-      "metadataUpdates");
-}
-
-void from_json(const json& j, MetadataUpdates& p) {
-  from_json_key(
-      j,
-      "connectorId",
-      p.connectorId,
-      "MetadataUpdates",
-      "ConnectorId",
-      "connectorId");
-  from_json_key(
-      j,
-      "metadataUpdates",
-      p.metadataUpdates,
-      "MetadataUpdates",
-      "List<std::shared_ptr<ConnectorMetadataUpdateHandle>>",
-      "metadataUpdates");
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
@@ -8747,6 +8802,66 @@ void from_json(const json& j, RemoteTransactionHandle& p) {
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+RestFunctionHandle::RestFunctionHandle() noexcept {
+  _type = "rest";
+}
+
+void to_json(json& j, const RestFunctionHandle& p) {
+  j = json::object();
+  j["@type"] = "rest";
+  to_json_key(
+      j,
+      "functionId",
+      p.functionId,
+      "RestFunctionHandle",
+      "SqlFunctionId",
+      "functionId");
+  to_json_key(
+      j, "version", p.version, "RestFunctionHandle", "String", "version");
+  to_json_key(
+      j,
+      "signature",
+      p.signature,
+      "RestFunctionHandle",
+      "Signature",
+      "signature");
+  to_json_key(
+      j,
+      "executionEndpoint",
+      p.executionEndpoint,
+      "RestFunctionHandle",
+      "URI",
+      "executionEndpoint");
+}
+
+void from_json(const json& j, RestFunctionHandle& p) {
+  p._type = j["@type"];
+  from_json_key(
+      j,
+      "functionId",
+      p.functionId,
+      "RestFunctionHandle",
+      "SqlFunctionId",
+      "functionId");
+  from_json_key(
+      j, "version", p.version, "RestFunctionHandle", "String", "version");
+  from_json_key(
+      j,
+      "signature",
+      p.signature,
+      "RestFunctionHandle",
+      "Signature",
+      "signature");
+  from_json_key(
+      j,
+      "executionEndpoint",
+      p.executionEndpoint,
+      "RestFunctionHandle",
+      "URI",
+      "executionEndpoint");
+}
+} // namespace facebook::presto::protocol
+namespace facebook::presto::protocol {
 RowNumberNode::RowNumberNode() noexcept {
   _type = "com.facebook.presto.sql.planner.plan.RowNumberNode";
 }
@@ -9326,12 +9441,12 @@ void from_json(const json& j, SpecialFormExpression& p) {
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
 SqlFunctionHandle::SqlFunctionHandle() noexcept {
-  _type = "json_file";
+  _type = "sql_function_handle";
 }
 
 void to_json(json& j, const SqlFunctionHandle& p) {
   j = json::object();
-  j["@type"] = "json_file";
+  j["@type"] = "sql_function_handle";
   to_json_key(
       j,
       "functionId",
@@ -10178,6 +10293,47 @@ void to_json(json& j, const TaskStats& p) {
       "completedDrivers");
   to_json_key(
       j,
+      "totalNewDrivers",
+      p.totalNewDrivers,
+      "TaskStats",
+      "int",
+      "totalNewDrivers");
+  to_json_key(
+      j,
+      "queuedNewDrivers",
+      p.queuedNewDrivers,
+      "TaskStats",
+      "int",
+      "queuedNewDrivers");
+  to_json_key(
+      j,
+      "runningNewDrivers",
+      p.runningNewDrivers,
+      "TaskStats",
+      "int",
+      "runningNewDrivers");
+  to_json_key(
+      j,
+      "completedNewDrivers",
+      p.completedNewDrivers,
+      "TaskStats",
+      "int",
+      "completedNewDrivers");
+  to_json_key(
+      j, "totalSplits", p.totalSplits, "TaskStats", "int", "totalSplits");
+  to_json_key(
+      j, "queuedSplits", p.queuedSplits, "TaskStats", "int", "queuedSplits");
+  to_json_key(
+      j, "runningSplits", p.runningSplits, "TaskStats", "int", "runningSplits");
+  to_json_key(
+      j,
+      "completedSplits",
+      p.completedSplits,
+      "TaskStats",
+      "int",
+      "completedSplits");
+  to_json_key(
+      j,
       "cumulativeUserMemory",
       p.cumulativeUserMemory,
       "TaskStats",
@@ -10446,6 +10602,47 @@ void from_json(const json& j, TaskStats& p) {
       "TaskStats",
       "int",
       "completedDrivers");
+  from_json_key(
+      j,
+      "totalNewDrivers",
+      p.totalNewDrivers,
+      "TaskStats",
+      "int",
+      "totalNewDrivers");
+  from_json_key(
+      j,
+      "queuedNewDrivers",
+      p.queuedNewDrivers,
+      "TaskStats",
+      "int",
+      "queuedNewDrivers");
+  from_json_key(
+      j,
+      "runningNewDrivers",
+      p.runningNewDrivers,
+      "TaskStats",
+      "int",
+      "runningNewDrivers");
+  from_json_key(
+      j,
+      "completedNewDrivers",
+      p.completedNewDrivers,
+      "TaskStats",
+      "int",
+      "completedNewDrivers");
+  from_json_key(
+      j, "totalSplits", p.totalSplits, "TaskStats", "int", "totalSplits");
+  from_json_key(
+      j, "queuedSplits", p.queuedSplits, "TaskStats", "int", "queuedSplits");
+  from_json_key(
+      j, "runningSplits", p.runningSplits, "TaskStats", "int", "runningSplits");
+  from_json_key(
+      j,
+      "completedSplits",
+      p.completedSplits,
+      "TaskStats",
+      "int",
+      "completedSplits");
   from_json_key(
       j,
       "cumulativeUserMemory",
@@ -10939,13 +11136,6 @@ void to_json(json& j, const TaskInfo& p) {
       "noMoreSplits");
   to_json_key(j, "stats", p.stats, "TaskInfo", "TaskStats", "stats");
   to_json_key(j, "needsPlan", p.needsPlan, "TaskInfo", "bool", "needsPlan");
-  to_json_key(
-      j,
-      "metadataUpdates",
-      p.metadataUpdates,
-      "TaskInfo",
-      "MetadataUpdates",
-      "metadataUpdates");
   to_json_key(j, "nodeId", p.nodeId, "TaskInfo", "String", "nodeId");
 }
 
@@ -10976,13 +11166,6 @@ void from_json(const json& j, TaskInfo& p) {
       "noMoreSplits");
   from_json_key(j, "stats", p.stats, "TaskInfo", "TaskStats", "stats");
   from_json_key(j, "needsPlan", p.needsPlan, "TaskInfo", "bool", "needsPlan");
-  from_json_key(
-      j,
-      "metadataUpdates",
-      p.metadataUpdates,
-      "TaskInfo",
-      "MetadataUpdates",
-      "metadataUpdates");
   from_json_key(j, "nodeId", p.nodeId, "TaskInfo", "String", "nodeId");
 }
 } // namespace facebook::presto::protocol
@@ -11193,9 +11376,13 @@ void from_json(const json& j, UnnestNode& p) {
 }
 } // namespace facebook::presto::protocol
 namespace facebook::presto::protocol {
+UpdateHandle::UpdateHandle() noexcept {
+  _type = "UpdateHandle";
+}
 
 void to_json(json& j, const UpdateHandle& p) {
   j = json::object();
+  j["@type"] = "UpdateHandle";
   to_json_key(j, "handle", p.handle, "UpdateHandle", "TableHandle", "handle");
   to_json_key(
       j,
@@ -11207,6 +11394,7 @@ void to_json(json& j, const UpdateHandle& p) {
 }
 
 void from_json(const json& j, UpdateHandle& p) {
+  p._type = j["@type"];
   from_json_key(j, "handle", p.handle, "UpdateHandle", "TableHandle", "handle");
   from_json_key(
       j,

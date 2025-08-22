@@ -17,16 +17,15 @@ import com.facebook.airlift.concurrent.SetThreadName;
 import com.facebook.airlift.http.client.HttpClient;
 import com.facebook.airlift.http.client.HttpUriBuilder;
 import com.facebook.airlift.http.client.Request;
-import com.facebook.airlift.http.client.Response;
 import com.facebook.airlift.http.client.ResponseHandler;
 import com.facebook.airlift.http.client.thrift.ThriftRequestUtils;
 import com.facebook.airlift.http.client.thrift.ThriftResponseHandler;
 import com.facebook.airlift.json.Codec;
 import com.facebook.airlift.json.JsonCodec;
 import com.facebook.airlift.json.smile.SmileCodec;
+import com.facebook.airlift.units.Duration;
 import com.facebook.drift.transport.netty.codec.Protocol;
 import com.facebook.presto.Session;
-import com.facebook.presto.connector.ConnectorTypeSerdeManager;
 import com.facebook.presto.execution.QueryManager;
 import com.facebook.presto.execution.StateMachine;
 import com.facebook.presto.execution.StateMachine.StateChangeListener;
@@ -35,7 +34,6 @@ import com.facebook.presto.execution.TaskInfo;
 import com.facebook.presto.execution.TaskStatus;
 import com.facebook.presto.metadata.HandleResolver;
 import com.facebook.presto.metadata.MetadataManager;
-import com.facebook.presto.metadata.MetadataUpdates;
 import com.facebook.presto.server.RequestErrorTracker;
 import com.facebook.presto.server.SimpleHttpResponseCallback;
 import com.facebook.presto.server.SimpleHttpResponseHandler;
@@ -44,9 +42,7 @@ import com.facebook.presto.server.thrift.ThriftHttpResponseHandler;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import io.airlift.units.Duration;
-
-import javax.annotation.concurrent.GuardedBy;
+import com.google.errorprone.annotations.concurrent.GuardedBy;
 
 import java.net.URI;
 import java.util.Optional;
@@ -59,19 +55,15 @@ import java.util.function.Consumer;
 
 import static com.facebook.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static com.facebook.airlift.http.client.Request.Builder.prepareGet;
-import static com.facebook.airlift.http.client.Request.Builder.preparePost;
-import static com.facebook.airlift.http.client.ResponseHandlerUtils.propagate;
-import static com.facebook.airlift.http.client.StaticBodyGenerator.createStaticBodyGenerator;
+import static com.facebook.airlift.units.Duration.nanosSince;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_CURRENT_STATE;
 import static com.facebook.presto.client.PrestoHeaders.PRESTO_MAX_WAIT;
 import static com.facebook.presto.server.RequestErrorTracker.taskRequestErrorTracker;
 import static com.facebook.presto.server.RequestHelpers.setContentTypeHeaders;
-import static com.facebook.presto.server.TaskResourceUtils.convertFromThriftTaskInfo;
 import static com.facebook.presto.server.smile.AdaptingJsonResponseHandler.createAdaptingJsonResponseHandler;
 import static com.facebook.presto.server.smile.FullSmileResponseHandler.createFullSmileResponseHandler;
 import static com.facebook.presto.server.thrift.ThriftCodecWrapper.unwrapThriftCodec;
 import static com.facebook.presto.spi.StandardErrorCode.REMOTE_TASK_ERROR;
-import static io.airlift.units.Duration.nanosSince;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
@@ -83,7 +75,6 @@ public class TaskInfoFetcher
     private final StateMachine<TaskInfo> taskInfo;
     private final StateMachine<Optional<TaskInfo>> finalTaskInfo;
     private final Codec<TaskInfo> taskInfoCodec;
-    private final Codec<MetadataUpdates> metadataUpdatesCodec;
 
     private final long updateIntervalMillis;
     private final Duration taskInfoRefreshMaxWait;
@@ -111,16 +102,12 @@ public class TaskInfoFetcher
     @GuardedBy("this")
     private ListenableFuture<BaseResponse<TaskInfo>> future;
 
-    @GuardedBy("this")
-    private ListenableFuture<?> metadataUpdateFuture;
-
     private final boolean isBinaryTransportEnabled;
     private final boolean isThriftTransportEnabled;
     private final Session session;
     private final MetadataManager metadataManager;
     private final QueryManager queryManager;
     private final HandleResolver handleResolver;
-    private final ConnectorTypeSerdeManager connectorTypeSerdeManager;
     private final Protocol thriftProtocol;
 
     public TaskInfoFetcher(
@@ -130,7 +117,6 @@ public class TaskInfoFetcher
             Duration updateInterval,
             Duration taskInfoRefreshMaxWait,
             Codec<TaskInfo> taskInfoCodec,
-            Codec<MetadataUpdates> metadataUpdatesCodec,
             Duration maxErrorDuration,
             boolean summarizeTaskInfo,
             Executor executor,
@@ -143,7 +129,6 @@ public class TaskInfoFetcher
             MetadataManager metadataManager,
             QueryManager queryManager,
             HandleResolver handleResolver,
-            ConnectorTypeSerdeManager connectorTypeSerdeManager,
             Protocol thriftProtocol)
     {
         requireNonNull(initialTask, "initialTask is null");
@@ -154,8 +139,6 @@ public class TaskInfoFetcher
         this.taskInfo = new StateMachine<>("task " + taskId, executor, initialTask);
         this.finalTaskInfo = new StateMachine<>("task-" + taskId, executor, Optional.empty());
         this.taskInfoCodec = requireNonNull(taskInfoCodec, "taskInfoCodec is null");
-
-        this.metadataUpdatesCodec = requireNonNull(metadataUpdatesCodec, "metadataUpdatesCodec is null");
 
         this.updateIntervalMillis = requireNonNull(updateInterval, "updateInterval is null").toMillis();
         this.taskInfoRefreshMaxWait = requireNonNull(taskInfoRefreshMaxWait, "taskInfoRefreshMaxWait is null");
@@ -173,7 +156,6 @@ public class TaskInfoFetcher
         this.metadataManager = requireNonNull(metadataManager, "metadataManager is null");
         this.queryManager = requireNonNull(queryManager, "queryManager is null");
         this.handleResolver = requireNonNull(handleResolver, "handleResolver is null");
-        this.connectorTypeSerdeManager = requireNonNull(connectorTypeSerdeManager, "connectorTypeSerdeManager is null");
         this.thriftProtocol = requireNonNull(thriftProtocol, "thriftProtocol is null");
     }
 
@@ -271,11 +253,6 @@ public class TaskInfoFetcher
             return;
         }
 
-        MetadataUpdates metadataUpdateRequests = taskInfo.getMetadataUpdates();
-        if (!metadataUpdateRequests.getMetadataUpdates().isEmpty()) {
-            scheduleMetadataUpdates(metadataUpdateRequests);
-        }
-
         HttpUriBuilder httpUriBuilder = uriBuilderFrom(taskStatus.getSelf());
         URI uri = summarizeTaskInfo ? httpUriBuilder.addParameter("summarize").build() : httpUriBuilder.build();
         Request.Builder requestBuilder = setContentTypeHeaders(isBinaryTransportEnabled, prepareGet());
@@ -346,9 +323,6 @@ public class TaskInfoFetcher
             }
             updateStats(startNanos);
             errorTracker.requestSucceeded();
-            if (isThriftTransportEnabled) {
-                newValue = convertFromThriftTaskInfo(newValue, connectorTypeSerdeManager, handleResolver);
-            }
             updateTaskInfo(newValue);
         }
     }
@@ -391,51 +365,5 @@ public class TaskInfoFetcher
     private static boolean isDone(TaskInfo taskInfo)
     {
         return taskInfo.getTaskStatus().getState().isDone();
-    }
-
-    private void scheduleMetadataUpdates(MetadataUpdates metadataUpdateRequests)
-    {
-        MetadataUpdates results = metadataManager.getMetadataUpdateResults(session, queryManager, metadataUpdateRequests, taskId.getQueryId());
-        executor.execute(() -> sendMetadataUpdates(results));
-    }
-
-    private synchronized void sendMetadataUpdates(MetadataUpdates results)
-    {
-        TaskStatus taskStatus = getTaskInfo().getTaskStatus();
-
-        // we already have the final task info
-        if (isDone(getTaskInfo())) {
-            stop();
-            return;
-        }
-
-        // outstanding request?
-        if (metadataUpdateFuture != null && !metadataUpdateFuture.isDone()) {
-            // this should never happen
-            return;
-        }
-
-        byte[] metadataUpdatesJson = metadataUpdatesCodec.toBytes(results);
-        Request request = setContentTypeHeaders(isBinaryTransportEnabled, preparePost())
-                .setUri(uriBuilderFrom(taskStatus.getSelf()).appendPath("metadataresults").build())
-                .setBodyGenerator(createStaticBodyGenerator(metadataUpdatesJson))
-                .build();
-
-        errorTracker.startRequest();
-        metadataUpdateFuture = httpClient.executeAsync(request, new ResponseHandler<Response, RuntimeException>()
-        {
-            @Override
-            public Response handleException(Request request, Exception exception)
-            {
-                throw propagate(request, exception);
-            }
-
-            @Override
-            public Response handle(Request request, Response response)
-            {
-                return response;
-            }
-        });
-        currentRequestStartNanos.set(System.nanoTime());
     }
 }

@@ -33,6 +33,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
+import static com.facebook.airlift.units.Duration.succinctDuration;
 import static com.facebook.presto.common.RuntimeMetricName.DRIVER_COUNT_PER_TASK;
 import static com.facebook.presto.common.RuntimeMetricName.TASK_BLOCKED_TIME_NANOS;
 import static com.facebook.presto.common.RuntimeMetricName.TASK_ELAPSED_TIME_NANOS;
@@ -42,7 +43,6 @@ import static com.facebook.presto.common.RuntimeUnit.NANO;
 import static com.facebook.presto.common.RuntimeUnit.NONE;
 import static com.facebook.presto.execution.StageExecutionState.FINISHED;
 import static com.google.common.collect.ImmutableList.toImmutableList;
-import static io.airlift.units.Duration.succinctDuration;
 import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.lang.Math.toIntExact;
@@ -112,6 +112,16 @@ public class StageExecutionInfo
                 taskStatsAggregator.runningDrivers,
                 taskStatsAggregator.blockedDrivers,
                 taskStatsAggregator.completedDrivers,
+
+                taskStatsAggregator.totalNewDrivers,
+                taskStatsAggregator.queuedNewDrivers,
+                taskStatsAggregator.runningNewDrivers,
+                taskStatsAggregator.completedNewDrivers,
+
+                taskStatsAggregator.totalSplits,
+                taskStatsAggregator.queuedSplits,
+                taskStatsAggregator.runningSplits,
+                taskStatsAggregator.completedSplits,
 
                 taskStatsAggregator.cumulativeUserMemory,
                 taskStatsAggregator.cumulativeTotalMemory,
@@ -246,6 +256,16 @@ public class StageExecutionInfo
         private int blockedDrivers;
         private int completedDrivers;
 
+        private int totalNewDrivers;
+        private int queuedNewDrivers;
+        private int runningNewDrivers;
+        private int completedNewDrivers;
+
+        private int totalSplits;
+        private int queuedSplits;
+        private int runningSplits;
+        private int completedSplits;
+
         private double cumulativeUserMemory;
         private double cumulativeTotalMemory;
         private long userMemoryReservation;
@@ -290,6 +310,16 @@ public class StageExecutionInfo
             runningDrivers += taskStats.getRunningDrivers();
             blockedDrivers += taskStats.getBlockedDrivers();
             completedDrivers += taskStats.getCompletedDrivers();
+
+            totalNewDrivers += taskStats.getTotalNewDrivers();
+            queuedNewDrivers += taskStats.getQueuedNewDrivers();
+            runningNewDrivers += taskStats.getRunningNewDrivers();
+            completedNewDrivers += taskStats.getCompletedNewDrivers();
+
+            totalSplits += taskStats.getTotalSplits();
+            queuedSplits += taskStats.getQueuedSplits();
+            runningSplits += taskStats.getRunningSplits();
+            completedSplits += taskStats.getCompletedSplits();
 
             cumulativeUserMemory += taskStats.getCumulativeUserMemory();
             cumulativeTotalMemory += taskStats.getCumulativeTotalMemory();
