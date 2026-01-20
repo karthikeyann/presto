@@ -103,6 +103,7 @@ if(PRESTO_ENABLE_REMOTE_FUNCTIONS)
 endif()
 
 set(VELOX_ENABLE_CUDF ${PRESTO_ENABLE_CUDF} CACHE BOOL "Enable cuDF support")
+add_compile_definitions(VELOX_ENABLE_BACKWARD_COMPATIBILITY)
 if(PRESTO_ENABLE_CUDF)
   add_compile_definitions(PRESTO_ENABLE_CUDF)
   enable_language(CUDA)
