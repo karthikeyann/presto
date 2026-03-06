@@ -799,7 +799,7 @@ std::unique_ptr<velox::connector::ConnectorTableHandle> toHiveTableHandle(
   return std::make_unique<connector::hive::HiveTableHandle>(
       tableHandle.connectorId,
       tableName,
-      isPushdownFilterEnabled,
+      // isPushdownFilterEnabled,
       std::move(subfieldFilters),
       remainingFilter,
       finalDataColumns,

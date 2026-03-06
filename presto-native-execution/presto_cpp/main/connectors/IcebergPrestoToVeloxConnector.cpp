@@ -100,7 +100,7 @@ std::unique_ptr<velox::connector::ConnectorTableHandle> toIcebergTableHandle(
   return std::make_unique<velox::connector::hive::HiveTableHandle>(
       tableHandle.connectorId,
       tableName,
-      isPushdownFilterEnabled,
+      // isPushdownFilterEnabled,
       std::move(subfieldFilters),
       remainingFilter,
       finalDataColumns,
