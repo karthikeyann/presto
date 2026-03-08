@@ -44,7 +44,7 @@
         <air.maven.version>3.3.9</air.maven.version>
 
         <dep.antlr.version>4.13.2</dep.antlr.version>
-        <dep.airlift.version>0.225</dep.airlift.version>
+        <dep.airlift.version>0.227</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
         <dep.slice.version>0.38</dep.slice.version>
         <dep.testing-mysql-server-5.version>0.6</dep.testing-mysql-server-5.version>
@@ -61,12 +61,13 @@
         <dep.lucene.version>9.12.0</dep.lucene.version>
         <dep.assertj-core.version>3.8.0</dep.assertj-core.version>
         <dep.parquet.version>1.16.0</dep.parquet.version>
+        <dep.iceberg.version>1.10.0</dep.iceberg.version>
         <dep.asm.version>9.7.1</dep.asm.version>
         <dep.gcs.version>1.9.17</dep.gcs.version>
         <dep.alluxio.version>313</dep.alluxio.version>
         <dep.slf4j.version>2.0.16</dep.slf4j.version>
         <dep.kafka.version>3.9.1</dep.kafka.version>
-        <dep.pinot.version>1.3.0</dep.pinot.version>
+        <dep.pinot.version>1.4.0</dep.pinot.version>
         <dep.druid.version>35.0.1</dep.druid.version>
         <dep.jaxb.version>2.3.1</dep.jaxb.version>
         <dep.jaxb.runtime.version>4.0.6</dep.jaxb.runtime.version>

@@ -14,6 +14,7 @@ add_library(presto_function_metadata OBJECT FunctionMetadata.cpp)
 target_link_libraries(presto_function_metadata presto_common velox_function_registry)
 
 add_subdirectory(dynamic_registry)
+add_subdirectory(theta_sketch)
 
 if(PRESTO_ENABLE_REMOTE_FUNCTIONS)
   add_subdirectory(remote)

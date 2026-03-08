@@ -403,8 +403,8 @@ public abstract class AbstractTestNativeGeneralQueries
                 .build();
 
         try {
-            computeExpected(String.format("CREATE TABLE %s (c0 DATE) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of());
-            computeExpected(String.format("INSERT INTO %s VALUES (DATE '1996-01-02'), (DATE '1996-12-01')", tmpTableName), ImmutableList.of());
+            computeExpected(String.format("CREATE TABLE %s (c0 DATE) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of(BIGINT));
+            computeExpected(String.format("INSERT INTO %s VALUES (DATE '1996-01-02'), (DATE '1996-12-01')", tmpTableName), ImmutableList.of(BIGINT));
 
             assertQueryResultCount(session, String.format("SELECT * from %s where c0 in (select c0 from %s) ", tmpTableName, tmpTableName), 2);
         }
@@ -420,60 +420,10 @@ public abstract class AbstractTestNativeGeneralQueries
 
         String tmpTableName = generateRandomTableName();
         try {
-            getExpectedQueryRunner().execute(getSession(), format(
-                    "CREATE TABLE %s (" +
-                            "id BIGINT," +
-                            "name VARCHAR," +
-                            "is_active BOOLEAN," +
-                            "score DOUBLE," +
-                            "created_at TIMESTAMP," +
-                            "tags ARRAY<VARCHAR>," +
-                            "metrics ARRAY<DOUBLE>," +
-                            "properties MAP<VARCHAR, VARCHAR>," +
-                            "flags MAP<TINYINT, BOOLEAN>," +
-                            "nested_struct ROW(sub_id INTEGER, sub_name VARCHAR, sub_scores ARRAY<REAL>, sub_map MAP<SMALLINT, VARCHAR>)," +
-                            "price DECIMAL(15,2)," +
-                            "amount DECIMAL(21,6)," +
-                            "event_date DATE," +
-                            "ds VARCHAR" +
-                            ") WITH (format = 'TEXTFILE', partitioned_by = ARRAY['ds'])", tmpTableName), ImmutableList.of());
-            getExpectedQueryRunner().execute(getSession(), format(
-                    "INSERT INTO %s (" +
-                            "id," +
-                            "name," +
-                            "is_active," +
-                            "score," +
-                            "created_at," +
-                            "tags," +
-                            "metrics," +
-                            "properties," +
-                            "flags," +
-                            "nested_struct," +
-                            "price," +
-                            "amount," +
-                            "event_date," +
-                            "ds" +
-                            ") VALUES (" +
-                            "1001," +
-                            "'Jane Doe'," +
-                            "TRUE," +
-                            "88.5," +
-                            "TIMESTAMP '2025-07-23 10:00:00'," +
-                            "ARRAY['alpha', 'beta', 'gamma']," +
-                            "ARRAY[3.14, 2.71, 1.41]," +
-                            "MAP(ARRAY['color', 'size'], ARRAY['blue', 'large'])," +
-                            "MAP(ARRAY[TINYINT '1', TINYINT '2'], ARRAY[TRUE, FALSE])," +
-                            "ROW(" +
-                            "42," +
-                            "'sub_jane'," +
-                            "ARRAY[REAL '1.1', REAL '2.2', REAL '3.3']," +
-                            "MAP(ARRAY[SMALLINT '10', SMALLINT '20'], ARRAY['foo', 'bar'])" +
-                            ")," +
-                            "DECIMAL '12.34'," +
-                            "CAST('-123456789012345.123456' as DECIMAL(21,6))," +
-                            "DATE '2024-02-29'," +
-                            "'2025-07-01'" +
-                            ")", tmpTableName), ImmutableList.of());
+            getExpectedQueryRunner().execute(getSession(),
+                    createTextFileTableSql(tmpTableName, ImmutableList.of()),
+                    ImmutableList.of(BIGINT));
+            getExpectedQueryRunner().execute(getSession(), insertTextFileTableSql(tmpTableName), ImmutableList.of(BIGINT));
             // created_at is skipped because of the inconsistency in TIMESTAMP columns between Presto and Velox.
             // https://github.com/facebookincubator/velox/issues/8127
             assertQuery(format("SELECT id, name, is_active, score, tags, metrics, properties, flags, nested_struct, price, amount, event_date, ds FROM %s", tmpTableName));
@@ -481,6 +431,94 @@ public abstract class AbstractTestNativeGeneralQueries
         finally {
             dropTableIfExists(tmpTableName);
         }
+    }
+
+    @Test(groups = {"textfile"})
+    public void testReadTableWithCustomSerdeTextfile()
+    {
+        String tmpTableName = generateRandomTableName();
+        List<String> serdeParams = ImmutableList.of(
+                "textfile_field_delim='|'",
+                "textfile_escape_delim='\u0001'",
+                "textfile_collection_delim=';'",
+                "textfile_mapkey_delim=':'");
+        try {
+            getExpectedQueryRunner().execute(getSession(),
+                    createTextFileTableSql(tmpTableName, serdeParams),
+                    ImmutableList.of(BIGINT));
+            getExpectedQueryRunner().execute(getSession(), insertTextFileTableSql(tmpTableName), ImmutableList.of(BIGINT));
+            // created_at is skipped because of the inconsistency in TIMESTAMP columns between Presto and Velox.
+            // https://github.com/facebookincubator/velox/issues/8127
+            assertQuery(format("SELECT id, name, is_active, score, tags, metrics, properties, flags, nested_struct, price, amount, event_date, ds FROM %s", tmpTableName));
+        }
+        finally {
+            dropTableIfExists(tmpTableName);
+        }
+    }
+
+    private String createTextFileTableSql(String tableName, List<String> serdeParams)
+    {
+        String serde = serdeParams.isEmpty() ? "" : ", " + String.join(", ", serdeParams);
+        return format(
+                "CREATE TABLE %s (" +
+                        "id BIGINT," +
+                        "name VARCHAR," +
+                        "is_active BOOLEAN," +
+                        "score DOUBLE," +
+                        "created_at TIMESTAMP," +
+                        "tags ARRAY<VARCHAR>," +
+                        "metrics ARRAY<DOUBLE>," +
+                        "properties MAP<VARCHAR, VARCHAR>," +
+                        "flags MAP<TINYINT, BOOLEAN>," +
+                        "nested_struct ROW(sub_id INTEGER, sub_name VARCHAR, sub_scores ARRAY<REAL>, sub_map MAP<SMALLINT, VARCHAR>)," +
+                        "price DECIMAL(15,2)," +
+                        "amount DECIMAL(21,6)," +
+                        "event_date DATE," +
+                        "ds VARCHAR" +
+                        ") WITH (format = 'TEXTFILE'%s, partitioned_by = ARRAY['ds'])",
+                tableName,
+                serde);
+    }
+
+    private String insertTextFileTableSql(String tableName)
+    {
+        return format(
+                "INSERT INTO %s (" +
+                        "id," +
+                        "name," +
+                        "is_active," +
+                        "score," +
+                        "created_at," +
+                        "tags," +
+                        "metrics," +
+                        "properties," +
+                        "flags," +
+                        "nested_struct," +
+                        "price," +
+                        "amount," +
+                        "event_date," +
+                        "ds" +
+                        ") VALUES (" +
+                        "1001," +
+                        "'Jane Doe'," +
+                        "TRUE," +
+                        "88.5," +
+                        "TIMESTAMP '2025-07-23 10:00:00'," +
+                        "ARRAY['alpha', 'beta', 'gamma']," +
+                        "ARRAY[3.14, 2.71, 1.41]," +
+                        "MAP(ARRAY['color', 'size'], ARRAY['blue', 'large'])," +
+                        "MAP(ARRAY[TINYINT '1', TINYINT '2'], ARRAY[TRUE, FALSE])," +
+                        "ROW(" +
+                        "42," +
+                        "'sub_jane'," +
+                        "ARRAY[REAL '1.1', REAL '2.2', REAL '3.3']," +
+                        "MAP(ARRAY[SMALLINT '10', SMALLINT '20'], ARRAY['foo', 'bar'])" +
+                        ")," +
+                        "DECIMAL '12.34'," +
+                        "CAST('-123456789012345.123456' as DECIMAL(21,6))," +
+                        "DATE '2024-02-29'," +
+                        "'2025-07-01'" +
+                        ")", tableName);
     }
 
     @Test
@@ -1484,8 +1522,8 @@ public abstract class AbstractTestNativeGeneralQueries
 
         try {
             // Create a Parquet table with decimal types and test data.
-            getExpectedQueryRunner().execute(expectedSession, String.format("CREATE TABLE %s (c0 DECIMAL(15,2), c1 DECIMAL(38,2)) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of());
-            getExpectedQueryRunner().execute(expectedSession, String.format("INSERT INTO %s VALUES (DECIMAL '0', DECIMAL '0'), (DECIMAL '1.2', DECIMAL '3.4'), (DECIMAL '1000000.12', DECIMAL '28239823232323.57'), (DECIMAL '-542392.89', DECIMAL '-6723982392109.29')", tmpTableName), ImmutableList.of());
+            getExpectedQueryRunner().execute(expectedSession, String.format("CREATE TABLE %s (c0 DECIMAL(15,2), c1 DECIMAL(38,2)) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of(BIGINT));
+            getExpectedQueryRunner().execute(expectedSession, String.format("INSERT INTO %s VALUES (DECIMAL '0', DECIMAL '0'), (DECIMAL '1.2', DECIMAL '3.4'), (DECIMAL '1000000.12', DECIMAL '28239823232323.57'), (DECIMAL '-542392.89', DECIMAL '-6723982392109.29')", tmpTableName), ImmutableList.of(BIGINT));
 
             String[] queries = {
                     String.format("SELECT * FROM %s WHERE c0 > DECIMAL '1.1' and c1 < DECIMAL '5.2'", tmpTableName),
@@ -1538,11 +1576,11 @@ public abstract class AbstractTestNativeGeneralQueries
         String tmpTableName = generateRandomTableName();
         try {
             // Create a Parquet table with decimal types and test data.
-            getExpectedQueryRunner().execute(expectedSession, String.format("CREATE TABLE %s (c0 DECIMAL(15,2), c1 DECIMAL(38,2)) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of());
+            getExpectedQueryRunner().execute(expectedSession, String.format("CREATE TABLE %s (c0 DECIMAL(15,2), c1 DECIMAL(38,2)) WITH (format = 'PARQUET')", tmpTableName), ImmutableList.of(BIGINT));
             getExpectedQueryRunner().execute(expectedSession, String.format("INSERT INTO %s VALUES (DECIMAL '0', DECIMAL '0'), (DECIMAL '1.2', DECIMAL '3.4'), "
                     + "(DECIMAL '1000000.12', DECIMAL '28239823232323.57'), "
                     + "(DECIMAL '-542392.89', DECIMAL '-6723982392109.29'), (NULL, NULL), "
-                    + "(NULL, DECIMAL'-6723982392109.29'),(DECIMAL'1.2', NULL)", tmpTableName), ImmutableList.of());
+                    + "(NULL, DECIMAL'-6723982392109.29'),(DECIMAL'1.2', NULL)", tmpTableName), ImmutableList.of(BIGINT));
             String[] queries = {
                     String.format("Select approx_distinct(c0) from %s", tmpTableName),
                     String.format("Select approx_distinct(c1) from %s", tmpTableName),

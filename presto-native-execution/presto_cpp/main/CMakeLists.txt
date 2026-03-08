@@ -69,6 +69,7 @@ target_link_libraries(
   presto_session_properties
   presto_velox_plan_conversion
   presto_hive_functions
+  presto_theta_sketch_functions
   velox_abfs
   velox_aggregates
   velox_caching
@@ -93,6 +94,7 @@ target_link_libraries(
   velox_hive_connector
   velox_hive_iceberg_splitreader
   velox_hive_partition_function
+  velox_key_encoder
   velox_presto_serializer
   velox_presto_type_parser
   velox_s3fs

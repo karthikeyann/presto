@@ -32,6 +32,7 @@
 #include "presto_cpp/main/connectors/SystemConnector.h"
 #include "presto_cpp/main/connectors/hive/functions/HiveFunctionRegistration.h"
 #include "presto_cpp/main/functions/FunctionMetadata.h"
+#include "presto_cpp/main/functions/theta_sketch/ThetaSketchRegistration.h"
 #include "presto_cpp/main/http/HttpConstants.h"
 #include "presto_cpp/main/http/filters/AccessLogFilter.h"
 #include "presto_cpp/main/http/filters/HttpEndpointLatencyFilter.h"
@@ -283,16 +284,95 @@ PrestoServer::PrestoServer(const std::string& configDirectoryPath)
 
 PrestoServer::~PrestoServer() {}
 
+std::shared_ptr<std::thread> communicatorThread;
+
 void PrestoServer::run() {
+  initializeConfigs();
+
+  registerFileSystems();
+  registerFileSinks();
+  registerFileReadersAndWriters();
+  registerMemoryArbitrators();
+  registerShuffleInterfaceFactories();
+  registerCustomOperators();
+
+  // We need to register cuDF before the connectors so that the cuDF connector
+  // factories can be used.
+  communicatorThread = registerVeloxCudf();
+
+  // Register Presto connector factories and connectors
+  registerConnectors();
+
+  initializeVeloxMemory();
+  initializeThreadPools();
+
+  auto catalogNames = registerVeloxConnectors(fs::path(configDirectoryPath_));
+
+  initializeHttpServer();
+  initializeCoordinatorDiscoverer();
+  registerHttpEndpoints();
+
+  registerFunctions();
+  registerRemoteFunctions();
+  registerVectorSerdes();
+  registerPrestoPlanNodeSerDe();
+  registerTraceNodeFactories();
+  registerDynamicFunctions();
+  registerExchangeSources();
+
+  initializeTaskResources();
+  registerListeners();
+
+  prestoServerOperations_ =
+      std::make_unique<PrestoServerOperations>(taskManager_.get(), this);
+  registerSystemConnector();
+
+  // The endpoint used by operation in production.
+  httpServer_->registerGet(
+      "/v1/operation/.*",
+      [this](
+          proxygen::HTTPMessage* message,
+          const std::vector<std::unique_ptr<folly::IOBuf>>& /*body*/,
+          proxygen::ResponseHandler* downstream) {
+        prestoServerOperations_->runOperation(message, downstream);
+      });
+
+  logExecutorInfo();
+
+  PRESTO_STARTUP_LOG(INFO) << "Starting all periodic tasks";
+
+  auto* memoryAllocator = velox::memory::memoryManager()->allocator();
+  auto* asyncDataCache = velox::cache::AsyncDataCache::getInstance();
+  periodicTaskManager_ = std::make_unique<PeriodicTaskManager>(
+      driverCpuExecutor_,
+      spillerCpuExecutor_,
+      httpSrvIoExecutor_.get(),
+      httpSrvCpuExecutor_.get(),
+      exchangeHttpIoExecutor_.get(),
+      exchangeHttpCpuExecutor_.get(),
+      taskManager_.get(),
+      memoryAllocator,
+      asyncDataCache,
+      velox::connector::getAllConnectors(),
+      this);
+  addServerPeriodicTasks();
+  addAdditionalPeriodicTasks();
+  periodicTaskManager_->start();
+  createPeriodicMemoryChecker();
+  if (memoryChecker_ != nullptr) {
+    memoryChecker_->start();
+  }
+
+  // Start everything. After the return from the following call we are shutting
+  // down.
+  startServer(catalogNames);
+
+  shutdownServer();
+}
+
+void PrestoServer::initializeConfigs() {
   auto systemConfig = SystemConfig::instance();
   auto nodeConfig = NodeConfig::instance();
-  int httpPort{0};
-
-  std::string certPath;
-  std::string keyPath;
-  std::string ciphers;
-  std::string clientCertAndKeyPath;
-  std::optional<int> httpsPort;
 
   try {
     // Allow registering extra config properties before we load them from files.
@@ -302,12 +382,12 @@ void PrestoServer::run() {
     nodeConfig->initialize(
         fmt::format("{}/node.properties", configDirectoryPath_));
 
-    httpPort = systemConfig->httpServerHttpPort();
+    httpPort_ = systemConfig->httpServerHttpPort();
     if (systemConfig->httpServerHttpsEnabled()) {
-      httpsPort = systemConfig->httpServerHttpsPort();
+      httpsPort_ = systemConfig->httpServerHttpsPort();
 
-      ciphers = systemConfig->httpsSupportedCiphers();
-      if (ciphers.empty()) {
+      ciphers_ = systemConfig->httpsSupportedCiphers();
+      if (ciphers_.empty()) {
         VELOX_USER_FAIL("Https is enabled without ciphers");
       }
 
@@ -315,13 +395,13 @@ void PrestoServer::run() {
       if (!optionalCertPath.has_value()) {
         VELOX_USER_FAIL("Https is enabled without certificate path");
       }
-      certPath = optionalCertPath.value();
+      certPath_ = optionalCertPath.value();
 
       auto optionalKeyPath = systemConfig->httpsKeyPath();
       if (!optionalKeyPath.has_value()) {
         VELOX_USER_FAIL("Https is enabled without key path");
       }
-      keyPath = optionalKeyPath.value();
+      keyPath_ = optionalKeyPath.value();
 
       auto optionalClientCertPath = systemConfig->httpsClientCertAndKeyPath();
       if (!optionalClientCertPath.has_value()) {
@@ -333,7 +413,7 @@ void PrestoServer::run() {
 
       sslContext_ = util::createSSLContext(
           optionalClientCertPath.value(),
-          ciphers,
+          ciphers_,
           systemConfig->httpClientHttp2Enabled());
     }
 
@@ -362,64 +442,45 @@ void PrestoServer::run() {
     PRESTO_STARTUP_LOG(ERROR) << "Failed to start server due to " << e.what();
     exit(EXIT_FAILURE);
   }
+}
 
-  registerFileSystems();
-  registerFileSinks();
-  registerFileReadersAndWriters();
-  registerMemoryArbitrators();
-  registerShuffleInterfaceFactories();
-  registerCustomOperators();
-
-  // We need to register cuDF before the connectors so that the cuDF connector
-  // factories can be used.
-  auto communicatorThread = registerVeloxCudf();
-
-  // Register Presto connector factories and connectors
-  registerConnectors();
-
-  initializeVeloxMemory();
-  initializeThreadPools();
-
-  auto catalogNames = registerVeloxConnectors(fs::path(configDirectoryPath_));
-
+void PrestoServer::initializeHttpServer() {
+  auto systemConfig = SystemConfig::instance();
   const bool bindToNodeInternalAddressOnly =
       systemConfig->httpServerBindToNodeInternalAddressOnlyEnabled();
   folly::SocketAddress httpSocketAddress;
   if (bindToNodeInternalAddressOnly) {
-    httpSocketAddress.setFromHostPort(address_, httpPort);
+    httpSocketAddress.setFromHostPort(address_, httpPort_);
   } else {
-    httpSocketAddress.setFromLocalPort(httpPort);
+    httpSocketAddress.setFromLocalPort(httpPort_);
   }
   PRESTO_STARTUP_LOG(INFO) << fmt::format(
       "Starting server at {}:{} ({})",
       httpSocketAddress.getIPAddress().str(),
-      httpPort,
+      httpPort_,
       address_);
 
-  initializeCoordinatorDiscoverer();
-
-  const bool reusePort = SystemConfig::instance()->httpServerReusePort();
+  const bool reusePort = systemConfig->httpServerReusePort();
   auto httpConfig =
       std::make_unique<http::HttpConfig>(httpSocketAddress, reusePort);
 
   std::unique_ptr<http::HttpsConfig> httpsConfig;
-  if (httpsPort.has_value()) {
+  if (httpsPort_.has_value()) {
     folly::SocketAddress httpsSocketAddress;
     if (bindToNodeInternalAddressOnly) {
-      httpsSocketAddress.setFromHostPort(address_, httpsPort.value());
+      httpsSocketAddress.setFromHostPort(address_, httpsPort_.value());
     } else {
-      httpsSocketAddress.setFromLocalPort(httpsPort.value());
+      httpsSocketAddress.setFromLocalPort(httpsPort_.value());
     }
 
-    const bool http2Enabled =
-        SystemConfig::instance()->httpServerHttp2Enabled();
+    const bool http2Enabled = systemConfig->httpServerHttp2Enabled();
     const std::string clientCaFile =
-        SystemConfig::instance()->httpsClientCaFile().value_or("");
+        systemConfig->httpsClientCaFile().value_or("");
     httpsConfig = std::make_unique<http::HttpsConfig>(
         httpsSocketAddress,
-        certPath,
-        keyPath,
-        ciphers,
+        certPath_,
+        keyPath_,
+        ciphers_,
         reusePort,
         http2Enabled,
         clientCaFile);
@@ -427,6 +488,10 @@ void PrestoServer::run() {
 
   httpServer_ = std::make_unique<http::HttpServer>(
       httpSrvIoExecutor_, std::move(httpConfig), std::move(httpsConfig));
+}
+
+void PrestoServer::registerHttpEndpoints() {
+  auto systemConfig = SystemConfig::instance();
 
   httpServer_->registerPost(
       "/v1/memory",
@@ -515,13 +580,9 @@ void PrestoServer::run() {
           });
     }
   }
-  registerFunctions();
-  registerRemoteFunctions();
-  registerVectorSerdes();
-  registerPrestoPlanNodeSerDe();
-  registerTraceNodeFactories();
-  registerDynamicFunctions();
+}
 
+void PrestoServer::registerExchangeSources() {
   facebook::velox::exec::ExchangeSource::registerFactory(
       [this](
           const std::string& taskId,
@@ -545,6 +606,10 @@ void PrestoServer::run() {
   // Batch broadcast exchange source.
   velox::exec::ExchangeSource::registerFactory(
       operators::BroadcastExchangeSource::createExchangeSource);
+}
+
+void PrestoServer::initializeTaskResources() {
+  auto systemConfig = SystemConfig::instance();
 
   pool_ =
       velox::memory::MemoryManager::getInstance()->addLeafPool("PrestoServer");
@@ -574,6 +639,11 @@ void PrestoServer::run() {
       getVeloxPlanValidator(),
       *taskManager_);
   taskResource_->registerUris(*httpServer_);
+}
+
+void PrestoServer::registerListeners() {
+  auto systemConfig = SystemConfig::instance();
+
   if (systemConfig->enableSerializedPageChecksum()) {
     enableChecksum();
   }
@@ -593,19 +663,10 @@ void PrestoServer::run() {
       velox::exec::registerExprSetListener(listener);
     }
   }
-  prestoServerOperations_ =
-      std::make_unique<PrestoServerOperations>(taskManager_.get(), this);
-  registerSystemConnector();
+}
 
-  // The endpoint used by operation in production.
-  httpServer_->registerGet(
-      "/v1/operation/.*",
-      [this](
-          proxygen::HTTPMessage* message,
-          const std::vector<std::unique_ptr<folly::IOBuf>>& /*body*/,
-          proxygen::ResponseHandler* downstream) {
-        prestoServerOperations_->runOperation(message, downstream);
-      });
+void PrestoServer::logExecutorInfo() {
+  auto systemConfig = SystemConfig::instance();
 
   PRESTO_STARTUP_LOG(INFO) << "Driver CPU executor '"
                            << driverCpuExecutor_->getName() << "' has "
@@ -634,76 +695,11 @@ void PrestoServer::run() {
   } else {
     PRESTO_STARTUP_LOG(INFO) << "Spill executor was not configured.";
   }
+}
 
-  PRESTO_STARTUP_LOG(INFO) << "Starting all periodic tasks";
+void PrestoServer::startServer(const std::vector<std::string>& catalogNames) {
+  auto systemConfig = SystemConfig::instance();
 
-  auto* memoryAllocator = velox::memory::memoryManager()->allocator();
-  auto* asyncDataCache = velox::cache::AsyncDataCache::getInstance();
-  periodicTaskManager_ = std::make_unique<PeriodicTaskManager>(
-      driverCpuExecutor_,
-      spillerCpuExecutor_,
-      httpSrvIoExecutor_.get(),
-      httpSrvCpuExecutor_.get(),
-      exchangeHttpIoExecutor_.get(),
-      exchangeHttpCpuExecutor_.get(),
-      taskManager_.get(),
-      memoryAllocator,
-      asyncDataCache,
-      velox::connector::getAllConnectors(),
-      this);
-  addServerPeriodicTasks();
-  addAdditionalPeriodicTasks();
-  periodicTaskManager_->start();
-  createPeriodicMemoryChecker();
-  if (memoryChecker_ != nullptr) {
-    memoryChecker_->start();
-  }
-
-  auto setTaskUriCb = [&](bool useHttps, int port) {
-    std::string taskUri;
-    if (useHttps) {
-      taskUri = fmt::format(kTaskUriFormat, kHttps, address_, port);
-    } else {
-      taskUri = fmt::format(kTaskUriFormat, kHttp, address_, port);
-    }
-    taskManager_->setBaseUri(taskUri);
-  };
-
-  auto startAnnouncerAndHeartbeatManagerCb = [&](bool useHttps, int port) {
-    if (coordinatorDiscoverer_ != nullptr) {
-      announcer_ = std::make_unique<Announcer>(
-          address_,
-          useHttps,
-          port,
-          coordinatorDiscoverer_,
-          nodeVersion_,
-          environment_,
-          nodeId_,
-          nodeLocation_,
-          nodePoolType_,
-          systemConfig->prestoNativeSidecar(),
-          catalogNames,
-          systemConfig->announcementMaxFrequencyMs(),
-          sslContext_);
-      updateAnnouncerDetails();
-      announcer_->start();
-
-      uint64_t heartbeatFrequencyMs = systemConfig->heartbeatFrequencyMs();
-      if (heartbeatFrequencyMs > 0) {
-        heartbeatManager_ = std::make_unique<PeriodicHeartbeatManager>(
-            address_,
-            port,
-            coordinatorDiscoverer_,
-            sslContext_,
-            [server = this]() { return server->fetchNodeStatus(); },
-            heartbeatFrequencyMs);
-        heartbeatManager_->start();
-      }
-    }
-  };
-
-  // Start everything. After the return from the following call we are shutting
-  // down.
   auto startupOptions = systemConfig->httpServerStartupOptions();
   httpServer_->start(
       std::move(startupOptions),
@@ -718,12 +714,51 @@ void PrestoServer::run() {
               address.sslConfigs.size() != 0);
           // We could be bound to both http and https ports.
           // If set, we must use the https port and skip http.
-          if (httpsPort.has_value() && address.sslConfigs.size() == 0) {
+          if (httpsPort_.has_value() && address.sslConfigs.size() == 0) {
             continue;
           }
-          startAnnouncerAndHeartbeatManagerCb(
-              httpsPort.has_value(), address.address.getPort());
-          setTaskUriCb(httpsPort.has_value(), address.address.getPort());
+
+          if (coordinatorDiscoverer_ != nullptr) {
+            announcer_ = std::make_unique<Announcer>(
+                address_,
+                httpsPort_.has_value(),
+                address.address.getPort(),
+                coordinatorDiscoverer_,
+                nodeVersion_,
+                environment_,
+                nodeId_,
+                nodeLocation_,
+                nodePoolType_,
+                systemConfig->prestoNativeSidecar(),
+                catalogNames,
+                systemConfig->announcementMaxFrequencyMs(),
+                sslContext_);
+            updateAnnouncerDetails();
+            announcer_->start();
+
+            uint64_t heartbeatFrequencyMs =
+                systemConfig->heartbeatFrequencyMs();
+            if (heartbeatFrequencyMs > 0) {
+              heartbeatManager_ = std::make_unique<PeriodicHeartbeatManager>(
+                  address_,
+                  address.address.getPort(),
+                  coordinatorDiscoverer_,
+                  sslContext_,
+                  [server = this]() { return server->fetchNodeStatus(); },
+                  heartbeatFrequencyMs);
+              heartbeatManager_->start();
+            }
+          }
+
+          std::string taskUri;
+          if (httpsPort_.has_value()) {
+            taskUri = fmt::format(
+                kTaskUriFormat, kHttps, address_, address.address.getPort());
+          } else {
+            taskUri = fmt::format(
+                kTaskUriFormat, kHttp, address_, address.address.getPort());
+          }
+          taskManager_->setBaseUri(taskUri);
           break;
         }
 
@@ -740,7 +775,9 @@ void PrestoServer::run() {
           }
         }
       });
+}
 
+void PrestoServer::stopAnnouncer() {
   if (announcer_ != nullptr) {
     PRESTO_SHUTDOWN_LOG(INFO) << "Stopping announcer";
     announcer_->stop();
@@ -750,29 +787,9 @@ void PrestoServer::run() {
     PRESTO_SHUTDOWN_LOG(INFO) << "Stopping Heartbeat manager";
     heartbeatManager_->stop();
   }
+}
 
-  PRESTO_SHUTDOWN_LOG(INFO) << "Stopping all periodic tasks";
-
-  if (memoryChecker_ != nullptr) {
-    memoryChecker_->stop();
-  }
-  periodicTaskManager_->stop();
-  stopAdditionalPeriodicTasks();
-
-  // Destroy entities here to ensure we won't get any messages after Server
-  // object is gone and to have nice log in case shutdown gets stuck.
-  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying Task Resource";
-  taskResource_.reset();
-  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying Task Manager";
-  taskManager_.reset();
-  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying HTTP Server";
-  httpServer_.reset();
-
-  unregisterFileReadersAndWriters();
-  unregisterFileSystems();
-  unregisterConnectors();
-  unregisterVeloxCudf(communicatorThread);
-
+void PrestoServer::joinExecutors() {
   PRESTO_SHUTDOWN_LOG(INFO)
       << "Joining Driver CPU Executor '" << driverCpuExecutor_->getName()
       << "': threads: " << driverCpuExecutor_->numActiveThreads() << "/"
@@ -860,6 +877,34 @@ void PrestoServer::run() {
         << "': threads: " << pGlobalIOExecutor->numActiveThreads() << "/"
         << pGlobalIOExecutor->numThreads();
   }
+}
+
+void PrestoServer::shutdownServer() {
+  stopAnnouncer();
+
+  PRESTO_SHUTDOWN_LOG(INFO) << "Stopping all periodic tasks";
+
+  if (memoryChecker_ != nullptr) {
+    memoryChecker_->stop();
+  }
+  periodicTaskManager_->stop();
+  stopAdditionalPeriodicTasks();
+
+  // Destroy entities here to ensure we won't get any messages after Server
+  // object is gone and to have nice log in case shutdown gets stuck.
+  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying Task Resource";
+  taskResource_.reset();
+  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying Task Manager";
+  taskManager_.reset();
+  PRESTO_SHUTDOWN_LOG(INFO) << "Destroying HTTP Server";
+  httpServer_.reset();
+
+  unregisterFileReadersAndWriters();
+  unregisterFileSystems();
+  unregisterConnectors();
+  unregisterVeloxCudf(communicatorThread);
+
+  joinExecutors();
 
   if (cache_ != nullptr) {
     PRESTO_SHUTDOWN_LOG(INFO) << "Shutdown AsyncDataCache";
@@ -1472,6 +1517,9 @@ void PrestoServer::registerFunctions() {
       velox::connector::hasConnector("hive-hadoop2")) {
     hive::functions::registerHiveNativeFunctions();
   }
+
+  functions::aggregate::theta_sketch::registerAllThetaSketchFunctions(
+      prestoBuiltinFunctionPrefix_);
 }
 
 void PrestoServer::registerRemoteFunctions() {

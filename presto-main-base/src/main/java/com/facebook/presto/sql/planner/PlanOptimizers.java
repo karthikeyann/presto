@@ -110,8 +110,10 @@ import com.facebook.presto.sql.planner.iterative.rule.PushProjectionThroughExcha
 import com.facebook.presto.sql.planner.iterative.rule.PushProjectionThroughUnion;
 import com.facebook.presto.sql.planner.iterative.rule.PushRemoteExchangeThroughAssignUniqueId;
 import com.facebook.presto.sql.planner.iterative.rule.PushRemoteExchangeThroughGroupId;
+import com.facebook.presto.sql.planner.iterative.rule.PushSemiJoinThroughUnion;
 import com.facebook.presto.sql.planner.iterative.rule.PushTableWriteThroughUnion;
 import com.facebook.presto.sql.planner.iterative.rule.PushTopNThroughUnion;
+import com.facebook.presto.sql.planner.iterative.rule.PushdownThroughUnnest;
 import com.facebook.presto.sql.planner.iterative.rule.RandomizeSourceKeyInSemiJoin;
 import com.facebook.presto.sql.planner.iterative.rule.RemoveCrossJoinWithConstantInput;
 import com.facebook.presto.sql.planner.iterative.rule.RemoveEmptyDelete;
@@ -356,7 +358,8 @@ public class PlanOptimizers
                 estimatedExchangesCostCalculator,
                 ImmutableSet.of(
                         new PushProjectionThroughUnion(),
-                        new PushProjectionThroughExchange()));
+                        new PushProjectionThroughExchange(),
+                        new PushdownThroughUnnest(metadata.getFunctionAndTypeManager())));
 
         IterativeOptimizer simplifyRowExpressionOptimizer = new IterativeOptimizer(
                 metadata,
@@ -643,6 +646,12 @@ public class PlanOptimizers
                         statsCalculator,
                         estimatedExchangesCostCalculator,
                         ImmutableSet.of(new LeftJoinNullFilterToSemiJoin(metadata.getFunctionAndTypeManager()))),
+                new IterativeOptimizer(
+                        metadata,
+                        ruleStats,
+                        statsCalculator,
+                        estimatedExchangesCostCalculator,
+                        ImmutableSet.of(new PushSemiJoinThroughUnion())),
                 new IterativeOptimizer(
                         metadata,
                         ruleStats,

@@ -173,6 +173,8 @@ public final class SystemSessionProperties
     public static final String LEGACY_TIMESTAMP = "legacy_timestamp";
     public static final String ENABLE_INTERMEDIATE_AGGREGATIONS = "enable_intermediate_aggregations";
     public static final String PUSH_AGGREGATION_THROUGH_JOIN = "push_aggregation_through_join";
+    public static final String PUSH_SEMI_JOIN_THROUGH_UNION = "push_semi_join_through_union";
+    public static final String PUSHDOWN_THROUGH_UNNEST = "pushdown_through_unnest";
     public static final String PUSH_PARTIAL_AGGREGATION_THROUGH_JOIN = "push_partial_aggregation_through_join";
     public static final String PARSE_DECIMAL_LITERALS_AS_DOUBLE = "parse_decimal_literals_as_double";
     public static final String FORCE_SINGLE_NODE_OUTPUT = "force_single_node_output";
@@ -923,6 +925,16 @@ public final class SystemSessionProperties
                         PUSH_AGGREGATION_THROUGH_JOIN,
                         "Allow pushing aggregations below joins",
                         featuresConfig.isPushAggregationThroughJoin(),
+                        false),
+                booleanProperty(
+                        PUSH_SEMI_JOIN_THROUGH_UNION,
+                        "Allow pushing semi joins through union",
+                        featuresConfig.isPushSemiJoinThroughUnion(),
+                        false),
+                booleanProperty(
+                        PUSHDOWN_THROUGH_UNNEST,
+                        "Allow pushing projections and filters below unnest",
+                        featuresConfig.isPushdownThroughUnnest(),
                         false),
                 booleanProperty(
                         PUSH_PARTIAL_AGGREGATION_THROUGH_JOIN,
@@ -2596,6 +2608,16 @@ public final class SystemSessionProperties
     public static boolean shouldPushAggregationThroughJoin(Session session)
     {
         return session.getSystemProperty(PUSH_AGGREGATION_THROUGH_JOIN, Boolean.class);
+    }
+
+    public static boolean isPushSemiJoinThroughUnion(Session session)
+    {
+        return session.getSystemProperty(PUSH_SEMI_JOIN_THROUGH_UNION, Boolean.class);
+    }
+
+    public static boolean isPushdownThroughUnnest(Session session)
+    {
+        return session.getSystemProperty(PUSHDOWN_THROUGH_UNNEST, Boolean.class);
     }
 
     public static boolean isNativeExecutionEnabled(Session session)
