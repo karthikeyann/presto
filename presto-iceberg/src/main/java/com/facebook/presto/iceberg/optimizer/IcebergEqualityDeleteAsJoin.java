@@ -27,8 +27,8 @@ import com.facebook.presto.iceberg.IcebergTableHandle;
 import com.facebook.presto.iceberg.IcebergTableLayoutHandle;
 import com.facebook.presto.iceberg.IcebergTableName;
 import com.facebook.presto.iceberg.IcebergTableType;
-import com.facebook.presto.iceberg.IcebergTransactionManager;
 import com.facebook.presto.iceberg.IcebergUtil;
+import com.facebook.presto.iceberg.transaction.IcebergTransactionManager;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ConnectorPlanOptimizer;
 import com.facebook.presto.spi.ConnectorPlanRewriter;
@@ -351,6 +351,7 @@ public class IcebergEqualityDeleteAsJoin
                     new IcebergTableName(tableName.getTableName(),
                             IcebergTableType.EQUALITY_DELETES, // Read equality deletes instead of data
                             tableName.getSnapshotId(),
+                            tableName.getBranchName(),
                             Optional.empty()),
                     icebergTableHandle.isSnapshotSpecified(),
                     icebergTableHandle.getOutputPath(),
@@ -382,6 +383,7 @@ public class IcebergEqualityDeleteAsJoin
                     new IcebergTableName(tableName.getTableName(),
                             IcebergTableType.DATA_WITHOUT_EQUALITY_DELETES, // Don't apply equality deletes in the split
                             tableName.getSnapshotId(),
+                            tableName.getBranchName(),
                             tableName.getChangelogEndSnapshot()),
                     icebergTableHandle.isSnapshotSpecified(),
                     icebergTableHandle.getOutputPath(),

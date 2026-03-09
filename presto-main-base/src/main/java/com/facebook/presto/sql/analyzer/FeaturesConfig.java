@@ -156,7 +156,9 @@ public class FeaturesConfig
     private double defaultWriterReplicationCoefficient = 3;
     private boolean pushAggregationThroughJoin = true;
     private boolean pushSemiJoinThroughUnion;
+    private boolean simplifyCoalesceOverJoinKeys;
     private boolean pushdownThroughUnnest;
+    private boolean simplifyAggregationsOverConstant;
     private double memoryRevokingTarget = 0.5;
     private double memoryRevokingThreshold = 0.9;
     private boolean useMarkDistinct = true;
@@ -1691,6 +1693,19 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isSimplifyCoalesceOverJoinKeys()
+    {
+        return simplifyCoalesceOverJoinKeys;
+    }
+
+    @Config("optimizer.simplify-coalesce-over-join-keys")
+    @ConfigDescription("Simplify redundant COALESCE expressions over equi-join keys based on join type")
+    public FeaturesConfig setSimplifyCoalesceOverJoinKeys(boolean simplifyCoalesceOverJoinKeys)
+    {
+        this.simplifyCoalesceOverJoinKeys = simplifyCoalesceOverJoinKeys;
+        return this;
+    }
+
     public boolean isPushdownThroughUnnest()
     {
         return pushdownThroughUnnest;
@@ -1700,6 +1715,18 @@ public class FeaturesConfig
     public FeaturesConfig setPushdownThroughUnnest(boolean value)
     {
         this.pushdownThroughUnnest = value;
+        return this;
+    }
+
+    public boolean isSimplifyAggregationsOverConstant()
+    {
+        return simplifyAggregationsOverConstant;
+    }
+
+    @Config("optimizer.simplify-aggregations-over-constant")
+    public FeaturesConfig setSimplifyAggregationsOverConstant(boolean simplifyAggregationsOverConstant)
+    {
+        this.simplifyAggregationsOverConstant = simplifyAggregationsOverConstant;
         return this;
     }
 

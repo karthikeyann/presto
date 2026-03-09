@@ -53,6 +53,7 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import org.apache.iceberg.BaseTable;
+import org.apache.iceberg.BaseTransaction;
 import org.apache.iceberg.ContentFile;
 import org.apache.iceberg.ContentScanTask;
 import org.apache.iceberg.DataFile;
@@ -67,6 +68,7 @@ import org.apache.iceberg.RowLevelOperationMode;
 import org.apache.iceberg.Scan;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.Snapshot;
+import org.apache.iceberg.SnapshotRef;
 import org.apache.iceberg.SortOrder;
 import org.apache.iceberg.StructLike;
 import org.apache.iceberg.Table;
@@ -148,6 +150,7 @@ import static com.facebook.presto.iceberg.IcebergTableProperties.isHiveLocksEnab
 import static com.facebook.presto.iceberg.TypeConverter.toIcebergType;
 import static com.facebook.presto.iceberg.util.IcebergPrestoModelConverters.toIcebergTableIdentifier;
 import static com.facebook.presto.spi.StandardErrorCode.GENERIC_INTERNAL_ERROR;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_FOUND;
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.isNullOrEmpty;
@@ -215,6 +218,8 @@ public final class IcebergUtil
 {
     private static final Logger log = Logger.get(IcebergUtil.class);
     public static final int MIN_FORMAT_VERSION_FOR_DELETE = 2;
+    public static final int MAX_FORMAT_VERSION_FOR_ROW_LEVEL_OPERATIONS = 2;
+    public static final int MAX_SUPPORTED_FORMAT_VERSION = 3;
 
     public static final long DOUBLE_POSITIVE_ZERO = 0x0000000000000000L;
     public static final long DOUBLE_POSITIVE_INFINITE = 0x7ff0000000000000L;
@@ -285,6 +290,19 @@ public final class IcebergUtil
         return new SchemaTableName(table.getSchemaName(), icebergTableName.getTableName());
     }
 
+    public static TableOperations opsFromTable(Table table)
+    {
+        if (table instanceof BaseTransaction.TransactionTable) {
+            return ((BaseTransaction.TransactionTable) table).operations();
+        }
+        else if (table instanceof BaseTable) {
+            return ((BaseTable) table).operations();
+        }
+        else {
+            throw new PrestoException(NOT_SUPPORTED, "Unsupported Table type: " + table.getClass().getName());
+        }
+    }
+
     public static List<IcebergColumnHandle> getPartitionKeyColumnHandles(IcebergTableHandle tableHandle, Table table, TypeManager typeManager)
     {
         Set<PartitionSpec> partitionSpecs = tableHandle.getIcebergTableName().getSnapshotId()
@@ -310,6 +328,15 @@ public final class IcebergUtil
                 throw new PrestoException(ICEBERG_INVALID_SNAPSHOT_ID, format("Invalid snapshot [%s] for table: %s", name.getSnapshotId().get(), table));
             }
             return name.getSnapshotId();
+        }
+
+        if (name.getBranchName().isPresent()) {
+            String branchName = name.getBranchName().get();
+            SnapshotRef branchRef = table.refs().get(branchName);
+            if (branchRef != null && branchRef.isBranch()) {
+                return Optional.of(branchRef.snapshotId());
+            }
+            throw new PrestoException(NOT_FOUND, format("Branch '%s' does not exist in table %S", branchName, table));
         }
 
         if (name.getTableType() == IcebergTableType.CHANGELOG) {
@@ -1174,7 +1201,11 @@ public final class IcebergUtil
     public static int parseFormatVersion(String formatVersion)
     {
         try {
-            return parseInt(formatVersion);
+            int version = parseInt(formatVersion);
+            if (version > MAX_SUPPORTED_FORMAT_VERSION) {
+                throw new PrestoException(NOT_SUPPORTED, format("Iceberg table format version %d is not supported", version));
+            }
+            return version;
         }
         catch (NumberFormatException | IndexOutOfBoundsException e) {
             throw new PrestoException(ICEBERG_INVALID_FORMAT_VERSION, "Unable to parse user provided format version");
@@ -1277,6 +1308,47 @@ public final class IcebergUtil
             }
         }
         return dataLocation;
+    }
+
+    public static void validateNoBranchSpecified(IcebergTableHandle tableHandle, String operation)
+    {
+        if (tableHandle.getIcebergTableName().getBranchName().isPresent()) {
+            throw new PrestoException(NOT_SUPPORTED, format("%s is not supported on branch-specific tables. Branch '%s' was specified in table name '%s'",
+                            operation,
+                            tableHandle.getIcebergTableName().getBranchName().get(),
+                            tableHandle.getIcebergTableName().getTableNameWithType()));
+        }
+    }
+
+    public static void validateViewDefinitionForBranches(String viewData, String operation)
+    {
+        if (viewData != null && viewData.contains(".branch_")) {
+            throw new PrestoException(NOT_SUPPORTED, format("%s is not supported with branch-specific table references in the view definition. " +
+                                    "The view SQL appears to reference a branch using '.branch_' syntax. " +
+                                    "Please use the main table or FOR SYSTEM_VERSION AS OF syntax instead.", operation));
+        }
+    }
+
+    public static void validateNoBranchInBaseTables(List<SchemaTableName> baseTables, String operation)
+    {
+        for (SchemaTableName baseTable : baseTables) {
+            if (baseTable.getTableName().contains(".branch_")) {
+                throw new PrestoException(NOT_SUPPORTED, format("%s is not supported with branch-specific table references. Table '%s' appears to reference a branch. " +
+                                        "Please use the main table or FOR SYSTEM_VERSION AS OF syntax instead.", operation, baseTable));
+            }
+        }
+    }
+
+    public static void validateBranchExists(IcebergTableHandle tableHandle, Table icebergTable)
+    {
+        Optional<String> branchName = tableHandle.getIcebergTableName().getBranchName();
+        if (branchName.isPresent()) {
+            String branch = branchName.get();
+            SnapshotRef branchRef = icebergTable.refs().get(branch);
+            if (branchRef == null || !branchRef.isBranch()) {
+                throw new PrestoException(NOT_FOUND, format("Branch '%s' does not exist in table %s.%s", branch, tableHandle.getSchemaName(), tableHandle.getIcebergTableName().getTableName()));
+            }
+        }
     }
 
     public static Long getSplitSize(Table table)

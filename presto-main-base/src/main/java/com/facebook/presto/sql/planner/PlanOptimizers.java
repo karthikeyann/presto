@@ -147,7 +147,9 @@ import com.facebook.presto.sql.planner.iterative.rule.RewriteRowExpressions;
 import com.facebook.presto.sql.planner.iterative.rule.RewriteSpatialPartitioningAggregation;
 import com.facebook.presto.sql.planner.iterative.rule.RuntimeReorderJoinSides;
 import com.facebook.presto.sql.planner.iterative.rule.ScaledWriterRule;
+import com.facebook.presto.sql.planner.iterative.rule.SimplifyAggregationsOverConstant;
 import com.facebook.presto.sql.planner.iterative.rule.SimplifyCardinalityMap;
+import com.facebook.presto.sql.planner.iterative.rule.SimplifyCoalesceOverJoinKeys;
 import com.facebook.presto.sql.planner.iterative.rule.SimplifyCountOverConstant;
 import com.facebook.presto.sql.planner.iterative.rule.SimplifyRowExpressions;
 import com.facebook.presto.sql.planner.iterative.rule.SimplifySortWithConstantInput;
@@ -458,6 +460,7 @@ public class PlanOptimizers
                                         new ImplementBernoulliSampleAsFilter(metadata.getFunctionAndTypeManager()),
                                         new MergeLimitWithDistinct(),
                                         new PruneCountAggregationOverScalar(metadata.getFunctionAndTypeManager()),
+                                        new SimplifyAggregationsOverConstant(metadata.getFunctionAndTypeManager()),
                                         new PruneOrderByInAggregation(metadata.getFunctionAndTypeManager()),
                                         new RemoveRedundantTableFunctionProcessor(), // must run after TransformTableFunctionToTableFunctionProcessor
                                         new RewriteExcludeColumnsFunctionToProjection(), // must run after TransformTableFunctionToTableFunctionProcessor
@@ -582,7 +585,8 @@ public class PlanOptimizers
                 ruleStats,
                 statsCalculator,
                 estimatedExchangesCostCalculator,
-                ImmutableSet.of(new RemoveCrossJoinWithConstantInput(metadata.getFunctionAndTypeManager()))));
+                ImmutableSet.of(new RemoveCrossJoinWithConstantInput(metadata.getFunctionAndTypeManager()),
+                        new SimplifyCoalesceOverJoinKeys())));
 
         builder.add(new IterativeOptimizer(
                 metadata,

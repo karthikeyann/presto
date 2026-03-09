@@ -90,6 +90,7 @@ import static com.facebook.presto.SystemSessionProperties.REWRITE_CROSS_JOIN_OR_
 import static com.facebook.presto.SystemSessionProperties.REWRITE_EXPRESSION_WITH_CONSTANT_EXPRESSION;
 import static com.facebook.presto.SystemSessionProperties.REWRITE_LEFT_JOIN_NULL_FILTER_TO_SEMI_JOIN;
 import static com.facebook.presto.SystemSessionProperties.REWRITE_MIN_MAX_BY_TO_TOP_N;
+import static com.facebook.presto.SystemSessionProperties.SIMPLIFY_COALESCE_OVER_JOIN_KEYS;
 import static com.facebook.presto.SystemSessionProperties.SIMPLIFY_PLAN_WITH_EMPTY_INPUT;
 import static com.facebook.presto.SystemSessionProperties.USE_DEFAULTS_FOR_CORRELATED_AGGREGATION_PUSHDOWN_THROUGH_OUTER_JOINS;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
@@ -8221,6 +8222,97 @@ public abstract class AbstractTestQueries
                 .collect(toList());
     }
 
+    @Test
+    public void testSimplifyAggregationsOverConstant()
+    {
+        Session enabled = Session.builder(getSession())
+                .setSystemProperty("simplify_aggregations_over_constant", "true")
+                .build();
+        Session disabled = Session.builder(getSession())
+                .setSystemProperty("simplify_aggregations_over_constant", "false")
+                .build();
+
+        // MIN/MAX over constant projection from a real table
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x), MAX(x) FROM (SELECT 7 AS x FROM orders)",
+                disabled);
+
+        // ARBITRARY over constant projection
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT ARBITRARY(x) FROM (SELECT 42 AS x FROM orders)",
+                disabled);
+
+        // APPROX_DISTINCT over constant projection
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT APPROX_DISTINCT(x) FROM (SELECT 42 AS x FROM orders)",
+                disabled);
+
+        // APPROX_DISTINCT(NULL) over constant projection
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT APPROX_DISTINCT(x) FROM (SELECT CAST(NULL AS BIGINT) AS x FROM orders)",
+                disabled);
+
+        // MIN/MAX(NULL) over constant projection
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x), MAX(x) FROM (SELECT CAST(NULL AS BIGINT) AS x FROM orders)",
+                disabled);
+
+        // MIN/MAX over constant in scalar subquery
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x), MAX(x) FROM (SELECT 7 AS x)",
+                disabled);
+
+        // Mixed foldable (MIN) and unfoldable (SUM) over constant
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x), SUM(x) FROM (SELECT 5 AS x FROM orders)",
+                disabled);
+
+        // GROUP BY with MIN/MAX over constant
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT orderstatus, MIN(x), MAX(x) FROM (SELECT orderstatus, 5 AS x FROM orders) GROUP BY orderstatus",
+                disabled);
+
+        // Double type constant
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x), MAX(x) FROM (SELECT CAST(3.14 AS DOUBLE) AS x FROM orders)",
+                disabled);
+
+        // Aggregation with FILTER clause should not fold but still produce correct results
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x) FILTER (WHERE x > 0) FROM (SELECT 5 AS x FROM orders)",
+                disabled);
+
+        // Non-constant columns should not be affected
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(custkey), MAX(custkey) FROM orders",
+                disabled);
+
+        // Constant via WHERE equality (after constant propagation)
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(orderkey) FROM orders WHERE orderkey = 7",
+                disabled);
+
+        // Constant via WHERE equality with multiple aggregations
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(orderkey), MAX(orderkey), SUM(orderkey) FROM orders WHERE orderkey = 7",
+                disabled);
+
+        // Constant via CAST expression in projection
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(x) FROM (SELECT CAST(7 AS BIGINT) AS x FROM orders)",
+                disabled);
+
+        // WHERE clause that eliminates all rows — result should be NULL
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT MIN(orderkey) FROM orders WHERE orderkey = -1",
+                disabled);
+
+        // GROUP BY with constant via WHERE
+        assertQueryWithSameQueryRunner(enabled,
+                "SELECT orderstatus, MIN(orderkey) FROM orders WHERE orderkey = 7 GROUP BY orderstatus",
+                disabled);
+    }
+
     /**
      * Returns a date expression, casting to DATE if storageFormat is DWRF.
      */
@@ -8228,5 +8320,51 @@ public abstract class AbstractTestQueries
     {
         // DWRF does not support date type.
         return storageFormat.equals("DWRF") ? "cast(" + columnExpression + " as DATE)" : columnExpression;
+    }
+
+    @Test
+    public void testSimplifyCoalesceOverJoinKeys()
+    {
+        Session enabledSession = Session.builder(getSession())
+                .setSystemProperty(SIMPLIFY_COALESCE_OVER_JOIN_KEYS, "true")
+                .build();
+        Session disabledSession = Session.builder(getSession())
+                .setSystemProperty(SIMPLIFY_COALESCE_OVER_JOIN_KEYS, "false")
+                .build();
+
+        // LEFT JOIN: COALESCE(l.x, r.y) should be simplified to l.x
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(n.nationkey, r.regionkey) FROM nation n LEFT JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // LEFT JOIN: COALESCE(r.y, l.x) should also simplify to l.x
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(r.regionkey, n.nationkey) FROM nation n LEFT JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // RIGHT JOIN: COALESCE(l.x, r.y) should simplify to r.y
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(n.nationkey, r.regionkey) FROM nation n RIGHT JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // INNER JOIN: COALESCE(l.x, r.y) should simplify to l.x (first arg)
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(n.nationkey, r.regionkey) FROM nation n INNER JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // FULL JOIN: COALESCE should NOT be simplified — verify results still match
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(n.nationkey, r.regionkey) FROM nation n FULL JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // Multiple columns with COALESCE on join key plus other columns
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT COALESCE(n.nationkey, r.regionkey), n.name FROM nation n LEFT JOIN region r ON n.nationkey = r.regionkey",
+                disabledSession);
+
+        // JOIN USING produces COALESCE automatically
+        assertQueryWithSameQueryRunner(enabledSession,
+                "SELECT regionkey FROM nation LEFT JOIN region USING (regionkey)",
+                disabledSession);
     }
 }

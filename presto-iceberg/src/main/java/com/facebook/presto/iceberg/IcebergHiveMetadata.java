@@ -65,6 +65,7 @@ import com.facebook.presto.spi.statistics.ComputedStatistics;
 import com.facebook.presto.spi.statistics.TableStatisticType;
 import com.facebook.presto.spi.statistics.TableStatistics;
 import com.facebook.presto.spi.statistics.TableStatisticsMetadata;
+import com.facebook.presto.spi.transaction.IsolationLevel;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.cache.Cache;
 import com.google.common.cache.CacheBuilder;
@@ -133,6 +134,7 @@ import static com.facebook.presto.iceberg.IcebergUtil.isIcebergTable;
 import static com.facebook.presto.iceberg.IcebergUtil.populateTableProperties;
 import static com.facebook.presto.iceberg.IcebergUtil.toHiveColumns;
 import static com.facebook.presto.iceberg.IcebergUtil.tryGetProperties;
+import static com.facebook.presto.iceberg.IcebergUtil.validateViewDefinitionForBranches;
 import static com.facebook.presto.iceberg.PartitionFields.parsePartitionFields;
 import static com.facebook.presto.iceberg.PartitionSpecConverter.toPrestoPartitionSpec;
 import static com.facebook.presto.iceberg.SchemaConverter.toPrestoSchema;
@@ -192,10 +194,12 @@ public class IcebergHiveMetadata
             StatisticsFileCache statisticsFileCache,
             ManifestFileCache manifestFileCache,
             IcebergTableProperties tableProperties,
-            ConnectorSystemConfig connectorSystemConfig)
+            ConnectorSystemConfig connectorSystemConfig,
+            IsolationLevel isolationLevel,
+            boolean autoCommitContext)
     {
         super(typeManager, procedureRegistry, functionResolution, rowExpressionService, commitTaskCodec, columnMappingsCodec, schemaTableNamesCodec,
-                nodeVersion, filterStatsCalculatorService, statisticsFileCache, tableProperties);
+                nodeVersion, filterStatsCalculatorService, statisticsFileCache, tableProperties, isolationLevel, autoCommitContext);
         this.catalogName = requireNonNull(catalogName, "catalogName is null");
         this.metastore = requireNonNull(metastore, "metastore is null");
         this.hdfsEnvironment = requireNonNull(hdfsEnvironment, "hdfsEnvironment is null");
@@ -338,6 +342,7 @@ public class IcebergHiveMetadata
     @Override
     public void createSchema(ConnectorSession session, String schemaName, Map<String, Object> properties)
     {
+        shouldRunInAutoCommitTransaction("CREATE SCHEMA");
         Optional<String> location = getLocation(properties).map(uri -> {
             try {
                 hdfsEnvironment.getFileSystem(new HdfsContext(session, schemaName), new Path(uri));
@@ -362,6 +367,7 @@ public class IcebergHiveMetadata
     @Override
     public void dropSchema(ConnectorSession session, String schemaName)
     {
+        shouldRunInAutoCommitTransaction("DROP SCHEMA");
         // basic sanity check to provide a better error message
         if (!listTables(session, Optional.of(schemaName)).isEmpty() ||
                 !listViews(session, Optional.of(schemaName)).isEmpty()) {
@@ -374,6 +380,7 @@ public class IcebergHiveMetadata
     @Override
     public void renameSchema(ConnectorSession session, String source, String target)
     {
+        shouldRunInAutoCommitTransaction("RENAME SCHEMA");
         MetastoreContext metastoreContext = getMetastoreContext(session);
         metastore.renameDatabase(metastoreContext, source, target);
     }
@@ -423,11 +430,11 @@ public class IcebergHiveMetadata
         SortOrder sortOrder = parseSortFields(schema, getSortOrder(tableMetadata.getProperties()));
         FileFormat fileFormat = tableProperties.getFileFormat(session, tableMetadata.getProperties());
         TableMetadata metadata = newTableMetadata(schema, partitionSpec, sortOrder, targetPath, populateTableProperties(this, tableMetadata, tableProperties, fileFormat, session));
-        transaction = createTableTransaction(tableName, operations, metadata);
+        openCreateTableTransaction(schemaTableName, createTableTransaction(tableName, operations, metadata));
 
         return new IcebergOutputTableHandle(
                 schemaName,
-                new IcebergTableName(tableName, DATA, Optional.empty(), Optional.empty()),
+                new IcebergTableName(tableName, DATA, Optional.empty(), Optional.empty(), Optional.empty()),
                 toPrestoSchema(metadata.schema(), typeManager),
                 toPrestoPartitionSpec(metadata.spec(), typeManager),
                 getColumnsForWrite(metadata.schema(), metadata.spec(), typeManager),
@@ -441,6 +448,7 @@ public class IcebergHiveMetadata
     @Override
     public void dropTable(ConnectorSession session, ConnectorTableHandle tableHandle)
     {
+        shouldRunInAutoCommitTransaction("DROP TABLE");
         IcebergTableHandle handle = (IcebergTableHandle) tableHandle;
         verify(handle.getIcebergTableName().getTableType() == DATA, "only the data table can be dropped");
         // TODO: support path override in Iceberg table creation
@@ -460,6 +468,7 @@ public class IcebergHiveMetadata
     @Override
     public void renameTable(ConnectorSession session, ConnectorTableHandle tableHandle, SchemaTableName newTable)
     {
+        shouldRunInAutoCommitTransaction("RENAME TABLE");
         IcebergTableHandle handle = (IcebergTableHandle) tableHandle;
         verify(handle.getIcebergTableName().getTableType() == DATA, "only the data table can be renamed");
         metastore.renameTable(getMetastoreContext(session), handle.getSchemaName(), handle.getIcebergTableName().getTableName(), newTable.getSchemaName(), newTable.getTableName());
@@ -468,6 +477,8 @@ public class IcebergHiveMetadata
     @Override
     public void createView(ConnectorSession session, ConnectorTableMetadata viewMetadata, String viewData, boolean replace)
     {
+        shouldRunInAutoCommitTransaction("CREATE VIEW");
+        validateViewDefinitionForBranches(viewData, "CREATE VIEW");
         MetastoreContext metastoreContext = getMetastoreContext(session);
         SchemaTableName viewName = viewMetadata.getTable();
         Table table = createTableObjectForViewCreation(
@@ -559,6 +570,7 @@ public class IcebergHiveMetadata
     @Override
     public void renameView(ConnectorSession session, SchemaTableName source, SchemaTableName target)
     {
+        shouldRunInAutoCommitTransaction("RENAME VIEW");
         // Not checking if source view exists as this is already done in RenameViewTask
         metastore.renameTable(getMetastoreContext(session), source.getSchemaName(), source.getTableName(), target.getSchemaName(), target.getTableName());
     }
@@ -566,6 +578,7 @@ public class IcebergHiveMetadata
     @Override
     public void dropView(ConnectorSession session, SchemaTableName viewName)
     {
+        shouldRunInAutoCommitTransaction("DROP VIEW");
         ConnectorViewDefinition view = getViews(session, viewName.toSchemaTablePrefix()).get(viewName);
         checkIfNullView(view, viewName);
 
@@ -625,8 +638,7 @@ public class IcebergHiveMetadata
         Set<ColumnStatisticMetadata> supportedStatistics = ImmutableSet.<ColumnStatisticMetadata>builder()
                 .addAll(hiveColumnStatistics)
                 // iceberg table-supported statistics
-                .addAll(!connectorSystemConfig.isNativeExecution() ?
-                        super.getStatisticsCollectionMetadata(session, tableMetadata).getColumnStatistics() : ImmutableSet.of())
+                .addAll(super.getStatisticsCollectionMetadata(session, tableMetadata).getColumnStatistics())
                 .build();
         Set<TableStatisticType> tableStatistics = ImmutableSet.of(ROW_COUNT);
         return new TableStatisticsMetadata(supportedStatistics, tableStatistics, emptyList());
@@ -650,12 +662,6 @@ public class IcebergHiveMetadata
                     }
                 })
                 .collect(toImmutableSet());
-    }
-
-    @Override
-    public ConnectorTableHandle beginStatisticsCollection(ConnectorSession session, ConnectorTableHandle tableHandle)
-    {
-        return tableHandle;
     }
 
     @Override
