@@ -1,0 +1,77 @@
+# Fork-local staging workflow for karthikeyann/presto.
+# Mirrors rapidsai/velox-testing/.github/workflows/create-staging-composite.yml, but runs
+# INSIDE this fork so the fork's own GITHUB_TOKEN (contents: write) can push the staging
+# branches. No org PAT / bot collaborator is needed. Dispatched by tpchbench (`staging create-presto`).
+name: presto-create-staging (fork)
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_pr_numbers:
+        description: "Comma-separated prestodb/presto PR numbers to merge (empty = plain sync to base branch)"
+        type: string
+        default: ''
+      base_branch:
+        description: "Base branch of prestodb/presto"
+        type: string
+        default: master
+      target_branch:
+        description: "Staging branch to (re)create in this fork; a dated snapshot <target>_MM-DD-YYYY is created too"
+        type: string
+        default: staging
+      force_push:
+        description: "Force push the target branch"
+        type: boolean
+        default: true
+      velox_testing_ref:
+        description: "rapidsai/velox-testing ref providing scripts/create_staging_branch.sh"
+        type: string
+        default: main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  create-staging:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET_REPO: ${{ github.repository }}
+      SCRIPT_PATH: ./velox-testing/presto/scripts/create_staging.sh
+      BASE_ARGS: >-
+        --mode ci
+        --base-repository prestodb/presto
+        --base-branch ${{ inputs.base_branch }}
+        --target-branch ${{ inputs.target_branch }}
+        --auto-fetch-prs false
+        ${{ inputs.manual_pr_numbers && format('--manual-pr-numbers {0}', inputs.manual_pr_numbers) || '' }}
+        --force-push ${{ inputs.force_push }}
+    steps:
+      - name: Checkout rapidsai/velox-testing (staging scripts)
+        uses: actions/checkout@v4
+        with:
+          repository: rapidsai/velox-testing
+          ref: ${{ inputs.velox_testing_ref }}
+          path: velox-testing
+          persist-credentials: false
+      - name: Git identity
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      - name: Clone this fork as the target
+        run: git clone "https://x-access-token:${GH_TOKEN}@github.com/${TARGET_REPO}.git" presto
+      - name: Reset target branch
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step reset
+      - name: Fetch PRs
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step fetch-prs
+      - name: Test merge
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step test-merge
+      - name: Test pairwise
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step test-pairwise
+      - name: Merge
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step merge
+      - name: Manifest
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step manifest
+      - name: Push
+        run: ${SCRIPT_PATH} ${BASE_ARGS} --step push
