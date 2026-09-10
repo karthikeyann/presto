@@ -40,6 +40,7 @@ import com.google.common.collect.ImmutableMap;
 
 import java.util.Optional;
 
+import static com.facebook.presto.SystemSessionProperties.isRewriteCorrelatedNotEqualExistsEnabled;
 import static com.facebook.presto.common.function.OperatorType.GREATER_THAN;
 import static com.facebook.presto.common.type.BigintType.BIGINT;
 import static com.facebook.presto.common.type.BooleanType.BOOLEAN;
@@ -85,11 +86,13 @@ public class TransformExistsApplyToLateralNode
 
     private final StandardFunctionResolution functionResolution;
     private final LogicalRowExpressions logicalRowExpressions;
+    private final CorrelatedNotEqualExistsRewriter notEqualExistsRewriter;
 
     public TransformExistsApplyToLateralNode(FunctionAndTypeManager functionAndTypeManager)
     {
         requireNonNull(functionAndTypeManager, "functionManager is null");
         this.functionResolution = new FunctionResolution(functionAndTypeManager.getFunctionAndTypeResolver());
+        this.notEqualExistsRewriter = new CorrelatedNotEqualExistsRewriter(functionAndTypeManager);
         this.logicalRowExpressions = new LogicalRowExpressions(
                 new RowExpressionDeterminismEvaluator(functionAndTypeManager),
                 new FunctionResolution(functionAndTypeManager.getFunctionAndTypeResolver()),
@@ -112,6 +115,13 @@ public class TransformExistsApplyToLateralNode
         RowExpression expression = parent.getSubqueryAssignments().getExpressions().stream().collect(onlyElement());
         if (!(expression instanceof ExistsExpression)) {
             return Result.empty();
+        }
+
+        if (isRewriteCorrelatedNotEqualExistsEnabled(context.getSession())) {
+            Optional<PlanNode> summarized = notEqualExistsRewriter.rewrite(parent, context);
+            if (summarized.isPresent()) {
+                return Result.ofPlanNode(summarized.get());
+            }
         }
 
         Optional<PlanNode> nonDefaultAggregation = rewriteToNonDefaultAggregation(parent, context);

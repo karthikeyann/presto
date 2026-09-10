@@ -927,13 +927,38 @@ The corresponding configuration property is :ref:`admin/properties:\`\`optimizer
 
 Extends the ``join_prefilter_build_side`` optimization to clone more complex probe-side
 patterns (``UNION ALL``, cross join, ``UNNEST``, aggregation) when building the prefilter,
-and to push the prefilter ``SemiJoin`` below right-side aggregations so the build side is
-filtered before grouping. Only takes effect when ``join_prefilter_build_side`` is also
-enabled. Disabled by default because cloning additional probe-side work adds planning
-and runtime overhead, which only pays off when the build side is large enough to dominate
-the join cost.
+and to push the prefilter ``SemiJoin`` below grouped aggregations. For inner joins, either
+input can be filtered before grouping; the original join is retained to preserve duplicate
+row multiplicity. This transformation requires join keys to be grouping keys, a single
+nonempty grouping set, and a deterministic cloneable filtering input. Preserved outer-join
+inputs are not filtered.
+
+Prefiltering runs after cost-based join reordering so it operates on the selected join
+inputs. Only takes effect when ``join_prefilter_build_side`` is also enabled. Disabled by
+default because cloning additional work adds planning and runtime overhead, which only
+pays off when the reduction in the filtered input is large enough.
 
 The corresponding configuration property is ``optimizer.join-prefilter-build-side-with-complex-probe-side``.
+
+``rewrite_correlated_not_equal_exists``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``false``
+
+Summarizes correlated ``EXISTS`` subqueries with one or more equality keys and
+one ``BIGINT`` inequality (``<>``) using grouped ``MIN`` and ``MAX``. A left join
+to the summary preserves outer duplicates, including for projected ``EXISTS``
+and ``NOT EXISTS``. Missing groups, all-null groups and null outer comparison
+values produce ``false`` for ``EXISTS``.
+
+Only deterministic scan/filter/project or values inputs are eligible. Multiple
+inequality predicates, non-``BIGINT`` inequality types, and subqueries containing
+limits, ordering or aggregation retain the existing decorrelation strategy.
+Disabled by default: reducing join expansion can help, but building a large
+grouped summary can itself be expensive. Measure the resulting plan before enabling.
+
+The corresponding configuration property is ``optimizer.rewrite-correlated-not-equal-exists``.
 
 ``push_filter_through_selecting_aggregation``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

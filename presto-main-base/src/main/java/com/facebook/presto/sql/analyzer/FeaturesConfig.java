@@ -312,6 +312,7 @@ public class FeaturesConfig
     private boolean rewriteCrossJoinWithArrayNotContainsFilterToAntiJoin = true;
     private JoinNotNullInferenceStrategy joinNotNullInferenceStrategy = NONE;
     private boolean leftJoinNullFilterToSemiJoin = true;
+    private boolean rewriteCorrelatedNotEqualExists;
     private boolean broadcastJoinWithSmallBuildUnknownProbe;
     private boolean addPartialNodeForRowNumberWithLimit = true;
     private boolean inferInequalityPredicates;
@@ -3254,6 +3255,19 @@ public class FeaturesConfig
     public boolean isBroadcastJoinWithSmallBuildUnknownProbe()
     {
         return this.broadcastJoinWithSmallBuildUnknownProbe;
+    }
+
+    public boolean isRewriteCorrelatedNotEqualExists()
+    {
+        return rewriteCorrelatedNotEqualExists;
+    }
+
+    @Config("optimizer.rewrite-correlated-not-equal-exists")
+    @ConfigDescription("Summarize BIGINT correlated inequality EXISTS using grouped minimum and maximum")
+    public FeaturesConfig setRewriteCorrelatedNotEqualExists(boolean enabled)
+    {
+        rewriteCorrelatedNotEqualExists = enabled;
+        return this;
     }
 
     @Config("experimental.optimizer.broadcast-join-with-small-build-unknown-probe")
