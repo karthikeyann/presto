@@ -63,13 +63,13 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 import static java.util.Objects.requireNonNull;
 
 /**
- * This optimizer filters the right side of a join with the unique join keys on the left side of the join.
+ * This optimizer filters one side of a join with the unique join keys on the other side.
  * When the join key is wide or there are multiple join keys, it filters on the hash instead of using the keys.
  * <p>
  * Performance notes:
  * <ul>
  *     <li>The basic optimization (scan/filter/project probe side) is enabled by {@code join_prefilter_enabled}.</li>
- *     <li>Complex probe-side patterns (UNION ALL, cross join, unnest, aggregation) and right-side aggregation
+ *     <li>Complex probe-side patterns (UNION ALL, cross join, unnest, aggregation) and aggregation
  *         pushdown are gated by {@code join_prefilter_build_side_with_complex_probe_side}, which defaults to false.
  *         This ensures the additional planning overhead is only incurred when explicitly enabled.</li>
  *     <li>When the complex feature is disabled, the optimizer quickly returns after checking the basic
@@ -298,42 +298,52 @@ public class JoinPrefilter
                 List<VariableReferenceExpression> leftKeyList = equiJoinClause.stream().map(EquiJoinClause::getLeft).collect(toImmutableList());
                 List<VariableReferenceExpression> rightKeyList = equiJoinClause.stream().map(EquiJoinClause::getRight).collect(toImmutableList());
 
-                Set<VariableReferenceExpression> leftKeySet = ImmutableSet.copyOf(leftKeyList);
-                Optional<PlanNode> cloneableSource = findCloneableSource(rewrittenLeft, leftKeySet, complexEnabled);
+                // For an inner join, prefer filtering an aggregation's input to
+                // cloning that input merely to filter the opposite scan. Keep
+                // the original join: the prefilter must not change multiplicity.
+                // A preserved outer-join side cannot be filtered this way.
+                boolean filterLeft = complexEnabled && node.getType() == INNER
+                        && canPrefilterAggregation(rewrittenLeft, leftKeyList)
+                        && isScanFilterProjectOrUnion(rewrittenRight);
+                PlanNode sourceSide = filterLeft ? rewrittenRight : rewrittenLeft;
+                PlanNode targetSide = filterLeft ? rewrittenLeft : rewrittenRight;
+                List<VariableReferenceExpression> sourceKeys = filterLeft ? rightKeyList : leftKeyList;
+                List<VariableReferenceExpression> targetKeys = filterLeft ? leftKeyList : rightKeyList;
+                Optional<PlanNode> cloneableSource = findCloneableSource(sourceSide, ImmutableSet.copyOf(sourceKeys), complexEnabled);
 
                 // The copy is refused when the subtree cannot be duplicated safely, e.g. it is not
                 // deterministic, in which case the prefilter is not applied
-                Map<VariableReferenceExpression, VariableReferenceExpression> leftVarMap = new HashMap();
+                Map<VariableReferenceExpression, VariableReferenceExpression> leftVarMap = new HashMap<>();
                 Optional<PlanNode> copiedLeftKeys = cloneableSource.flatMap(
-                        source -> copyDeterministicScanNodes(source, metadata, idAllocator, leftKeyList, leftVarMap));
+                        source -> copyDeterministicScanNodes(source, metadata, idAllocator, sourceKeys, leftVarMap));
 
                 if (copiedLeftKeys.isPresent()) {
                     checkState(IntStream.range(0, leftKeyList.size()).boxed().allMatch(i -> leftKeyList.get(i).getType().equals(rightKeyList.get(i).getType())));
 
-                    boolean hashJoinKey = leftKeyList.size() > 1 || (leftKeyList.get(0).getType().equals(VARCHAR) || leftKeyList.get(0).getType() instanceof VarcharType);
+                    boolean hashJoinKey = sourceKeys.size() > 1 || (sourceKeys.get(0).getType().equals(VARCHAR) || sourceKeys.get(0).getType() instanceof VarcharType);
 
                     // First create a SELECT DISTINCT leftKey FROM left
                     PlanNode leftKeys = copiedLeftKeys.get();
                     ImmutableList.Builder<RowExpression> expressionsToProject = ImmutableList.builder();
                     if (hashJoinKey) {
-                        RowExpression hashExpression = getVariableHash(leftKeyList, functionAndTypeManager);
+                        RowExpression hashExpression = getVariableHash(sourceKeys.stream().map(leftVarMap::get).collect(toImmutableList()), functionAndTypeManager);
                         expressionsToProject.add(hashExpression);
                     }
                     else {
-                        expressionsToProject.add(leftVarMap.get(leftKeyList.get(0)));
+                        expressionsToProject.add(leftVarMap.get(sourceKeys.get(0)));
                     }
                     PlanNode projectNode = projectExpressions(leftKeys, idAllocator, variableAllocator, expressionsToProject.build(), ImmutableList.of());
 
-                    VariableReferenceExpression rightKeyToFilter = rightKeyList.get(0);
+                    VariableReferenceExpression rightKeyToFilter = targetKeys.get(0);
                     RowExpression rightHashExpression = null;
                     if (hashJoinKey) {
-                        rightHashExpression = getVariableHash(rightKeyList, functionAndTypeManager);
+                        rightHashExpression = getVariableHash(targetKeys, functionAndTypeManager);
                         rightKeyToFilter = variableAllocator.newVariable(rightHashExpression);
                     }
 
                     // DISTINCT on the leftkey or hash if wide column
                     PlanNode filteringSource = new AggregationNode(
-                            node.getLeft().getSourceLocation(),
+                            sourceSide.getSourceLocation(),
                             idAllocator.getNextId(),
                             projectNode,
                             ImmutableMap.of(),
@@ -347,15 +357,20 @@ public class JoinPrefilter
                     // There should be only one output variable. Project that
                     filteringSource = projectExpressions(filteringSource, idAllocator, variableAllocator, ImmutableList.of(filteringSource.getOutputVariables().get(0)), ImmutableList.of());
 
-                    // Apply prefilter to right side, optionally pushing below aggregation
-                    rewrittenRight = applyPrefilterToRight(
-                            rewrittenRight,
+                    PlanNode filteredTarget = applyPrefilter(
+                            targetSide,
                             filteringSource,
                             rightKeyToFilter,
-                            rightKeyList,
+                            targetKeys,
                             rightHashExpression,
                             hashJoinKey,
-                            node);
+                            targetSide);
+                    if (filterLeft) {
+                        rewrittenLeft = filteredTarget;
+                    }
+                    else {
+                        rewrittenRight = filteredTarget;
+                    }
                 }
             }
 
@@ -367,20 +382,41 @@ public class JoinPrefilter
             return node;
         }
 
-        private PlanNode applyPrefilterToRight(
+        private static boolean canPrefilterAggregation(PlanNode node, List<VariableReferenceExpression> keys)
+        {
+            // Only identity projections preserve the key names used below the
+            // aggregation. Computed or renamed keys require expression rewriting.
+            while (node instanceof ProjectNode) {
+                ProjectNode project = (ProjectNode) node;
+                if (keys.stream().anyMatch(key -> !key.equals(project.getAssignments().get(key)))) {
+                    return false;
+                }
+                node = project.getSource();
+            }
+            if (!(node instanceof AggregationNode)) {
+                return false;
+            }
+            AggregationNode aggregation = (AggregationNode) node;
+            return aggregation.getStep() == AggregationNode.Step.SINGLE
+                    && aggregation.getGroupingSetCount() == 1
+                    && !aggregation.hasEmptyGroupingSet()
+                    && aggregation.getGroupingKeys().containsAll(keys);
+        }
+
+        private PlanNode applyPrefilter(
                 PlanNode rewrittenRight,
                 PlanNode filteringSource,
                 VariableReferenceExpression rightKeyToFilter,
                 List<VariableReferenceExpression> rightKeyList,
                 RowExpression rightHashExpression,
                 boolean hashJoinKey,
-                JoinNode originalJoin)
+                PlanNode originalTarget)
         {
-            // Try to push the prefilter below a right-side aggregation
+            // Try to push the prefilter below the target aggregation.
             if (complexEnabled) {
                 Optional<PlanNode> pushed = tryPushPrefilterBelowAggregation(
                         rewrittenRight, filteringSource, rightKeyToFilter,
-                        rightKeyList, rightHashExpression, hashJoinKey, originalJoin);
+                        rightKeyList, rightHashExpression, hashJoinKey, originalTarget);
                 if (pushed.isPresent()) {
                     return pushed.get();
                 }
@@ -393,9 +429,9 @@ public class JoinPrefilter
 
             VariableReferenceExpression semiJoinOutput = variableAllocator.newVariable("semiJoinOutput", BOOLEAN);
             SemiJoinNode semiJoinNode = new SemiJoinNode(
-                    originalJoin.getRight().getSourceLocation(),
+                    originalTarget.getSourceLocation(),
                     idAllocator.getNextId(),
-                    originalJoin.getStatsEquivalentPlanNode(),
+                    Optional.empty(),
                     rewrittenRight,
                     filteringSource,
                     rightKeyToFilter,
@@ -407,8 +443,8 @@ public class JoinPrefilter
                     ImmutableMap.of());
 
             PlanNode result = new FilterNode(semiJoinNode.getSourceLocation(), idAllocator.getNextId(), semiJoinNode, semiJoinOutput);
-            if (result.getOutputVariables().size() > originalJoin.getRight().getOutputVariables().size()) {
-                result = restrictOutput(result, idAllocator, originalJoin.getRight().getOutputVariables());
+            if (result.getOutputVariables().size() > originalTarget.getOutputVariables().size()) {
+                result = restrictOutput(result, idAllocator, originalTarget.getOutputVariables());
             }
             return result;
         }
@@ -420,9 +456,13 @@ public class JoinPrefilter
                 List<VariableReferenceExpression> rightKeyList,
                 RowExpression rightHashExpression,
                 boolean hashJoinKey,
-                JoinNode originalJoin)
+                PlanNode originalTarget)
         {
-            // Peel through Project nodes
+            if (!canPrefilterAggregation(rightSide, rightKeyList)) {
+                return Optional.empty();
+            }
+
+            // Peel through identity-key Project nodes.
             PlanNode peeled = rightSide;
             ImmutableList.Builder<ProjectNode> projectStack = ImmutableList.builder();
             while (peeled instanceof ProjectNode) {
@@ -452,9 +492,9 @@ public class JoinPrefilter
 
             VariableReferenceExpression semiJoinOutput = variableAllocator.newVariable("semiJoinOutput", BOOLEAN);
             SemiJoinNode semiJoinNode = new SemiJoinNode(
-                    originalJoin.getRight().getSourceLocation(),
+                    originalTarget.getSourceLocation(),
                     idAllocator.getNextId(),
-                    originalJoin.getStatsEquivalentPlanNode(),
+                    Optional.empty(),
                     aggSource,
                     filteringSource,
                     rightKeyToFilter,

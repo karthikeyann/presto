@@ -19,8 +19,10 @@ import com.facebook.presto.spi.plan.JoinNode;
 import com.facebook.presto.spi.plan.PlanNode;
 import com.facebook.presto.spi.plan.SemiJoinNode;
 import com.facebook.presto.sql.planner.assertions.BasePlanTest;
+import com.google.common.collect.ImmutableList;
 import org.testng.annotations.Test;
 
+import static com.facebook.airlift.testing.Assertions.assertEqualsIgnoreOrder;
 import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_BUILD_SIDE;
 import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_COMPLEX_BUILD_SIDE;
 import static org.testng.Assert.assertFalse;
@@ -42,6 +44,30 @@ public class TestJoinPrefilter
                 .setSystemProperty(JOIN_PREFILTER_BUILD_SIDE, "true")
                 .setSystemProperty(JOIN_PREFILTER_COMPLEX_BUILD_SIDE, "true")
                 .build();
+    }
+
+    private Session enableComplexWithoutJoinReordering()
+    {
+        return Session.builder(enableComplex())
+                .setSystemProperty("join_reordering_strategy", "NONE")
+                .build();
+    }
+
+    private void assertSameResultsWithPrefilter(String sql)
+    {
+        Session enabled = enableComplexWithoutJoinReordering();
+        Session disabled = Session.builder(enabled)
+                .setSystemProperty(JOIN_PREFILTER_BUILD_SIDE, "false")
+                .build();
+        assertEqualsIgnoreOrder(
+                getQueryRunner().execute(enabled, sql).getMaterializedRows(),
+                getQueryRunner().execute(disabled, sql).getMaterializedRows());
+    }
+
+    private boolean hasSemiJoinBelowLeftSideAggregation(String sql, Session session)
+    {
+        JoinNode join = findFirst(getOptimizedPlan(sql, session), JoinNode.class);
+        return join != null && hasAggregationWithSemiJoinBelow(join.getLeft());
     }
 
     private PlanNode getOptimizedPlan(String sql, Session session)
@@ -151,6 +177,83 @@ public class TestJoinPrefilter
                         "(SELECT regionkey, count(*) AS cnt FROM nation GROUP BY regionkey) t " +
                         "JOIN region r ON t.regionkey = r.regionkey",
                 enableComplex()));
+    }
+
+    @Test
+    public void testAggregationLeftPushdown()
+    {
+        String sql = "SELECT t.regionkey, t.cnt, n.nationkey FROM " +
+                "(SELECT regionkey, count(*) AS cnt FROM nation GROUP BY regionkey) t " +
+                "JOIN nation n ON t.regionkey = n.regionkey WHERE n.nationkey < 10";
+        assertTrue(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
+        assertFalse(hasSemiJoinBelowLeftSideAggregation(sql, enableBasic()));
+        // Multiple matching build rows must still duplicate the aggregate row.
+        assertSameResultsWithPrefilter(sql);
+    }
+
+    @Test
+    public void testAggregationLeftPushdownMultipleKeys()
+    {
+        String sql = "SELECT t.regionkey, t.name, t.cnt FROM " +
+                "(SELECT regionkey, name, count(*) AS cnt FROM nation GROUP BY regionkey, name) t " +
+                "JOIN nation n ON t.regionkey = n.regionkey AND t.name = n.name WHERE n.nationkey < 10";
+        assertTrue(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
+        assertSameResultsWithPrefilter(sql);
+    }
+
+    @Test
+    public void testAggregationLeftPushdownNullAndEmptyKeys()
+    {
+        String aggregate = "(SELECT k, count(*) AS cnt FROM " +
+                "(SELECT IF(nationkey = 0, CAST(NULL AS BIGINT), regionkey) k FROM nation) " +
+                "GROUP BY k) t";
+        for (String predicate : ImmutableList.of("nationkey < 10", "nationkey < 0")) {
+            String sql = "SELECT t.k, t.cnt, n.nationkey FROM " + aggregate +
+                    " JOIN (SELECT IF(nationkey = 1, CAST(NULL AS BIGINT), regionkey) k, nationkey " +
+                    "FROM nation WHERE " + predicate + ") n ON t.k = n.k";
+            assertSameResultsWithPrefilter(sql);
+        }
+    }
+
+    @Test
+    public void testAggregationLeftNoPushdownForOuterJoin()
+    {
+        String sql = "SELECT t.regionkey, t.cnt, n.nationkey FROM " +
+                "(SELECT regionkey, count(*) AS cnt FROM nation GROUP BY regionkey) t " +
+                "LEFT JOIN (SELECT regionkey, nationkey FROM nation WHERE nationkey < 2) n " +
+                "ON t.regionkey = n.regionkey";
+        assertFalse(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
+        assertSameResultsWithPrefilter(sql);
+    }
+
+    @Test
+    public void testAggregationLeftNoPushdownForNonGroupingKey()
+    {
+        String sql = "SELECT t.nationkey, t.regionkey FROM " +
+                "(SELECT nationkey, max(regionkey) AS regionkey FROM nation GROUP BY nationkey) t " +
+                "JOIN nation n ON t.regionkey = n.regionkey WHERE n.nationkey < 10";
+        assertFalse(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
+        assertSameResultsWithPrefilter(sql);
+    }
+
+    @Test
+    public void testAggregationLeftNoPushdownForGroupingSets()
+    {
+        String sql = "SELECT t.regionkey, t.cnt FROM " +
+                "(SELECT regionkey, count(*) AS cnt FROM nation " +
+                "GROUP BY GROUPING SETS ((regionkey), (regionkey, nationkey))) t " +
+                "JOIN nation n ON t.regionkey = n.regionkey WHERE n.nationkey < 10";
+        assertFalse(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
+        assertSameResultsWithPrefilter(sql);
+    }
+
+    @Test
+    public void testAggregationLeftNoPushdownForNonDeterministicBuild()
+    {
+        String sql = "SELECT t.regionkey, t.cnt FROM " +
+                "(SELECT regionkey, count(*) AS cnt FROM nation GROUP BY regionkey) t " +
+                "JOIN (SELECT regionkey FROM nation WHERE random() > 0.5) n ON t.regionkey = n.regionkey";
+        assertFalse(hasSemiJoinBelowLeftSideAggregation(sql, enableComplexWithoutJoinReordering()));
     }
 
     @Test
