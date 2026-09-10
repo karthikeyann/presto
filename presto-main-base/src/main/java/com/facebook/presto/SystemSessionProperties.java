@@ -2299,7 +2299,7 @@ public final class SystemSessionProperties
                         false),
                 booleanProperty(
                         JOIN_PREFILTER_COMPLEX_BUILD_SIDE,
-                        "Extend join prefilter to support complex left-side patterns (UNION ALL, cross join, unnest, aggregation) and push prefilter below right-side aggregation",
+                        "Extend join prefilter to support complex patterns (UNION ALL, cross join, unnest, aggregation) and prefilter grouping aggregation inputs on either inner-join side",
                         false,
                         false),
                 booleanProperty(OPTIMIZER_USE_HISTOGRAMS,

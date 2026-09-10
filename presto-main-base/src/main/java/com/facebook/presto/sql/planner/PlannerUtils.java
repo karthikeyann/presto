@@ -365,9 +365,11 @@ public class PlannerUtils
         }
 
         return Optional.of(new ProjectNode(
+                projectNode.getSourceLocation(),
                 planNodeIdAllocator.getNextId(),
                 newSource.get(),
-                newAssignments.build()));
+                newAssignments.build(),
+                projectNode.getLocality()));
     }
 
     private static TableScanNode copyTableScan(TableScanNode scanNode, PlanNodeIdAllocator planNodeIdAllocator, Map<VariableReferenceExpression, VariableReferenceExpression> varMap)

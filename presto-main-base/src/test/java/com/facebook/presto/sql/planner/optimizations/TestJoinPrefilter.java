@@ -55,7 +55,11 @@ public class TestJoinPrefilter
 
     private void assertSameResultsWithPrefilter(String sql)
     {
-        Session enabled = enableComplexWithoutJoinReordering();
+        assertSameResultsWithPrefilter(sql, enableComplexWithoutJoinReordering());
+    }
+
+    private void assertSameResultsWithPrefilter(String sql, Session enabled)
+    {
         Session disabled = Session.builder(enabled)
                 .setSystemProperty(JOIN_PREFILTER_BUILD_SIDE, "false")
                 .build();
@@ -202,6 +206,28 @@ public class TestJoinPrefilter
     }
 
     @Test
+    public void testAggregationPrefilterAfterJoinReordering()
+    {
+        String sql = "SELECT sum(l.extendedprice) FROM lineitem l " +
+                "JOIN part p ON l.partkey = p.partkey " +
+                "JOIN (SELECT partkey, avg(quantity) AS average_quantity FROM lineitem GROUP BY partkey) a " +
+                "ON a.partkey = p.partkey " +
+                "WHERE p.brand = 'Brand#23' AND p.container = 'MED BOX' " +
+                "AND l.quantity < 0.2 * a.average_quantity";
+        PlanNode plan = getOptimizedPlan(sql, enableComplex());
+        assertTrue(hasGroupedAggregationWithSemiJoinBelow(plan));
+        assertSameResultsWithPrefilter(sql, enableComplex());
+    }
+
+    private static boolean hasGroupedAggregationWithSemiJoinBelow(PlanNode node)
+    {
+        if (node instanceof AggregationNode && !((AggregationNode) node).getGroupingKeys().isEmpty()) {
+            return containsNode(node, SemiJoinNode.class);
+        }
+        return node.getSources().stream().anyMatch(TestJoinPrefilter::hasGroupedAggregationWithSemiJoinBelow);
+    }
+
+    @Test
     public void testAggregationLeftPushdownNullAndEmptyKeys()
     {
         String aggregate = "(SELECT k, count(*) AS cnt FROM " +
@@ -280,12 +306,16 @@ public class TestJoinPrefilter
     @Test
     public void testComplexDisabledWithoutFlag()
     {
-        // Without complex flag, UNION ALL left side should NOT produce SemiJoin
+        // Keep the union on the probe side: reordering may put a basic scan
+        // there instead, in which case the basic prefilter is applicable.
+        Session session = Session.builder(enableBasic())
+                .setSystemProperty("join_reordering_strategy", "NONE")
+                .build();
         assertFalse(planContainsSemiJoin(
                 "SELECT * FROM " +
                         "(SELECT regionkey FROM nation UNION ALL SELECT regionkey FROM nation) t " +
                         "JOIN region r ON t.regionkey = r.regionkey",
-                enableBasic()));
+                session));
     }
 
     @Test
