@@ -1018,7 +1018,7 @@ public class PlanOptimizers
         // particular, cost-based reordering can put a grouped fact table next
         // to a selective dimension scan. Running earlier can instead clone the
         // entire fact scan and introduce a semijoin that limits reordering.
-        builder.add(new JoinPrefilter(metadata));
+        builder.add(new JoinPrefilter(metadata, statsCalculator));
 
         // After ReorderJoins, `statsEquivalentPlanNode` will be unassigned to intermediate join nodes.
         // We run it again to mark this for intermediate join nodes.

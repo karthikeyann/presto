@@ -387,6 +387,7 @@ public final class SystemSessionProperties
     public static final String DEFAULT_VIEW_SECURITY_MODE = "default_view_security_mode";
     public static final String JOIN_PREFILTER_BUILD_SIDE = "join_prefilter_build_side";
     public static final String JOIN_PREFILTER_COMPLEX_BUILD_SIDE = "join_prefilter_build_side_with_complex_probe_side";
+    public static final String JOIN_PREFILTER_COST_BASED = "join_prefilter_cost_based";
     public static final String OPTIMIZER_USE_HISTOGRAMS = "optimizer_use_histograms";
     public static final String INLINE_PROJECTIONS_ON_VALUES = "inline_projections_on_values";
     public static final String INCLUDE_VALUES_NODE_IN_CONNECTOR_OPTIMIZER = "include_values_node_in_connector_optimizer";
@@ -2308,6 +2309,11 @@ public final class SystemSessionProperties
                         "Extend join prefilter to support complex patterns (UNION ALL, cross join, unnest, aggregation) and prefilter grouping aggregation inputs on either inner-join side",
                         false,
                         false),
+                booleanProperty(
+                        JOIN_PREFILTER_COST_BASED,
+                        "Skip join prefilter when the estimated filtering source is not smaller than its target",
+                        false,
+                        false),
                 booleanProperty(OPTIMIZER_USE_HISTOGRAMS,
                         "whether or not to use histograms in the CBO",
                         featuresConfig.isUseHistograms(),
@@ -4064,6 +4070,11 @@ public final class SystemSessionProperties
     public static boolean isJoinPrefilterComplexBuildSideEnabled(Session session)
     {
         return session.getSystemProperty(JOIN_PREFILTER_COMPLEX_BUILD_SIDE, Boolean.class);
+    }
+
+    public static boolean isJoinPrefilterCostBasedEnabled(Session session)
+    {
+        return session.getSystemProperty(JOIN_PREFILTER_COST_BASED, Boolean.class);
     }
 
     public static boolean isOptimizeTopNUsingRowIdEnabled(Session session)

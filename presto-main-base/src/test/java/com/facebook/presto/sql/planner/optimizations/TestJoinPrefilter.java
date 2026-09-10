@@ -25,6 +25,7 @@ import org.testng.annotations.Test;
 import static com.facebook.airlift.testing.Assertions.assertEqualsIgnoreOrder;
 import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_BUILD_SIDE;
 import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_COMPLEX_BUILD_SIDE;
+import static com.facebook.presto.SystemSessionProperties.JOIN_PREFILTER_COST_BASED;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
 
@@ -145,6 +146,29 @@ public class TestJoinPrefilter
         assertTrue(planContainsSemiJoin(
                 "SELECT * FROM nation n JOIN region r ON n.regionkey = r.regionkey",
                 enableBasic()));
+    }
+
+    @Test
+    public void testCostBasedSkipsLargerFilteringSource()
+    {
+        Session enabled = Session.builder(enableComplexWithoutJoinReordering())
+                .setSystemProperty(JOIN_PREFILTER_COST_BASED, "true")
+                .build();
+        String sql = "SELECT * FROM nation n JOIN region r ON n.regionkey = r.regionkey";
+        assertFalse(planContainsSemiJoin(sql, enabled));
+        assertTrue(planContainsSemiJoin(sql, enableComplexWithoutJoinReordering()));
+        assertSameResultsWithPrefilter(sql, enabled);
+    }
+
+    @Test
+    public void testCostBasedKeepsSmallerFilteringSource()
+    {
+        Session enabled = Session.builder(enableComplexWithoutJoinReordering())
+                .setSystemProperty(JOIN_PREFILTER_COST_BASED, "true")
+                .build();
+        String sql = "SELECT * FROM region r JOIN nation n ON r.regionkey = n.regionkey";
+        assertTrue(planContainsSemiJoin(sql, enabled));
+        assertSameResultsWithPrefilter(sql, enabled);
     }
 
     @Test

@@ -15,6 +15,9 @@ package com.facebook.presto.sql.planner.optimizations;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.common.type.VarcharType;
+import com.facebook.presto.cost.CachingStatsProvider;
+import com.facebook.presto.cost.StatsCalculator;
+import com.facebook.presto.cost.StatsProvider;
 import com.facebook.presto.metadata.FunctionAndTypeManager;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.spi.VariableAllocator;
@@ -44,6 +47,7 @@ import java.util.Set;
 import java.util.stream.IntStream;
 
 import static com.facebook.presto.SystemSessionProperties.isJoinPrefilterComplexBuildSideEnabled;
+import static com.facebook.presto.SystemSessionProperties.isJoinPrefilterCostBasedEnabled;
 import static com.facebook.presto.SystemSessionProperties.isJoinPrefilterEnabled;
 import static com.facebook.presto.common.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.common.type.VarcharType.VARCHAR;
@@ -80,11 +84,13 @@ public class JoinPrefilter
         implements PlanOptimizer
 {
     private final Metadata metadata;
+    private final StatsCalculator statsCalculator;
     private boolean isEnabledForTesting;
 
-    public JoinPrefilter(Metadata metadata)
+    public JoinPrefilter(Metadata metadata, StatsCalculator statsCalculator)
     {
         this.metadata = requireNonNull(metadata, "metadata is null");
+        this.statsCalculator = requireNonNull(statsCalculator, "statsCalculator is null");
     }
 
     @Override
@@ -103,7 +109,10 @@ public class JoinPrefilter
     public PlanOptimizerResult optimize(PlanNode plan, Session session, TypeProvider types, VariableAllocator variableAllocator, PlanNodeIdAllocator idAllocator, WarningCollector warningCollector)
     {
         if (isEnabled(session)) {
-            Rewriter rewriter = new Rewriter(session, metadata, idAllocator, variableAllocator, metadata.getFunctionAndTypeManager());
+            Optional<StatsProvider> stats = isJoinPrefilterCostBasedEnabled(session)
+                    ? Optional.of(new CachingStatsProvider(statsCalculator, session, types))
+                    : Optional.empty();
+            Rewriter rewriter = new Rewriter(session, metadata, idAllocator, variableAllocator, metadata.getFunctionAndTypeManager(), stats);
             PlanNode rewritten = SimplePlanRewriter.rewriteWith(rewriter, plan, null);
             return PlanOptimizerResult.optimizerResult(rewritten, rewriter.isPlanChanged());
         }
@@ -271,9 +280,10 @@ public class JoinPrefilter
         private final VariableAllocator variableAllocator;
         private final FunctionAndTypeManager functionAndTypeManager;
         private final boolean complexEnabled;
+        private final Optional<StatsProvider> stats;
         private boolean planChanged;
 
-        private Rewriter(Session session, Metadata metadata, PlanNodeIdAllocator idAllocator, VariableAllocator variableAllocator, FunctionAndTypeManager functionAndTypeManager)
+        private Rewriter(Session session, Metadata metadata, PlanNodeIdAllocator idAllocator, VariableAllocator variableAllocator, FunctionAndTypeManager functionAndTypeManager, Optional<StatsProvider> stats)
         {
             this.session = requireNonNull(session, "session is null");
             this.metadata = requireNonNull(metadata, "functionAndTypeManager is null");
@@ -281,6 +291,7 @@ public class JoinPrefilter
             this.variableAllocator = requireNonNull(variableAllocator, "idAllocator is null");
             this.functionAndTypeManager = requireNonNull(functionAndTypeManager, "functionAndTypeManager is null");
             this.complexEnabled = isJoinPrefilterComplexBuildSideEnabled(session);
+            this.stats = requireNonNull(stats, "stats is null");
         }
 
         @Override
@@ -310,6 +321,17 @@ public class JoinPrefilter
                 List<VariableReferenceExpression> sourceKeys = filterLeft ? rightKeyList : leftKeyList;
                 List<VariableReferenceExpression> targetKeys = filterLeft ? leftKeyList : rightKeyList;
                 Optional<PlanNode> cloneableSource = findCloneableSource(sourceSide, ImmutableSet.copyOf(sourceKeys), complexEnabled);
+                if (cloneableSource.isPresent() && stats.isPresent()) {
+                    // Estimate original inputs, which contain no variables
+                    // introduced by this pass. Avoid cloning a full fact scan
+                    // just to prefilter an already selective dimension result.
+                    double sourceRows = stats.get().getStats(filterLeft ? right : left).getOutputRowCount();
+                    double targetRows = stats.get().getStats(filterLeft ? left : right).getOutputRowCount();
+                    // Unknown estimates (NaN) preserve the existing behavior.
+                    if (sourceRows >= targetRows) {
+                        cloneableSource = Optional.empty();
+                    }
+                }
 
                 // The copy is refused when the subtree cannot be duplicated safely, e.g. it is not
                 // deterministic, in which case the prefilter is not applied

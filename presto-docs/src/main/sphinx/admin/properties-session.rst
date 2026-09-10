@@ -938,7 +938,7 @@ inputs. Only takes effect when ``join_prefilter_build_side`` is also enabled. Di
 default because cloning additional work adds planning and runtime overhead, which only
 pays off when the reduction in the filtered input is large enough.
 
-The corresponding configuration property is ``optimizer.join-prefilter-build-side-with-complex-probe-side``.
+This option is a session property.
 
 ``rewrite_correlated_not_equal_exists``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -959,6 +959,18 @@ Disabled by default: reducing join expansion can help, but building a large
 grouped summary can itself be expensive. Measure the resulting plan before enabling.
 
 The corresponding configuration property is ``optimizer.rewrite-correlated-not-equal-exists``.
+
+``join_prefilter_cost_based``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+* **Type:** ``boolean``
+* **Default value:** ``false``
+
+When join prefiltering is enabled, skip cloning a filtering source whose
+estimated row count is at least as large as the target input. This conservative
+guard avoids expensive redundant filtering of an already selective result.
+Unknown estimates retain the existing behavior. It is a row-count heuristic,
+not a proof of join-key coverage or a complete CPU/GPU cost model.
 
 ``push_filter_through_selecting_aggregation``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
