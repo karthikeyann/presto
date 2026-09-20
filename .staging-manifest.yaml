@@ -1,0 +1,29 @@
+# Staging Branch Manifest
+# This file describes how this staging branch was created
+
+metadata:
+  generated_at: "2026-09-20T03:21:31Z"
+  target_repository: "karthikeyann/presto"
+  target_branch: "staging"
+  dated_branch: "staging_09-20-2026"
+
+base:
+  repository: "prestodb/presto"
+  branch: "master"
+  commit: "75f8294957d6a6922e9847d150b35fbd11c741d4"
+  url: "https://github.com/prestodb/presto/tree/75f8294957d6a6922e9847d150b35fbd11c741d4"
+
+additional_merge:
+  null  # No additional repository merged
+
+merged_prs:
+  - number: 27719
+    commit: "038707a78a4dbe89727cf0f9cf33cc57cadbca63"
+    author: "dan13bauer"
+    title: "fix: Fall back to HTTP when consumer fragment runs on coordinator"
+    url: "https://github.com/prestodb/presto/pull/27719"
+  - number: 27975
+    commit: "8eddfc2cdddb54bbefbf86b024586603559cf63f"
+    author: "lga-zurich"
+    title: "build(native): Use rapids-cmake to configure CUDA architectures for GPU builds"
+    url: "https://github.com/prestodb/presto/pull/27975"
