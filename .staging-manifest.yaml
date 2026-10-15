@@ -1,0 +1,24 @@
+# Staging Branch Manifest
+# This file describes how this staging branch was created
+
+metadata:
+  generated_at: "2026-10-15T07:44:40Z"
+  target_repository: "karthikeyann/presto"
+  target_branch: "staging"
+  dated_branch: "staging_10-15-2026"
+
+base:
+  repository: "prestodb/presto"
+  branch: "master"
+  commit: "a96fa547899f03c8edbab85e482b066da0d07a31"
+  url: "https://github.com/prestodb/presto/tree/a96fa547899f03c8edbab85e482b066da0d07a31"
+
+additional_merge:
+  null  # No additional repository merged
+
+merged_prs:
+  - number: 28659
+    commit: "5e10b0345ae480831cc3b55cb8ba8bf522a54a58"
+    author: "karthikeyann"
+    title: "Make native query runners configurable for cuDF test arms"
+    url: "https://github.com/prestodb/presto/pull/28659"
